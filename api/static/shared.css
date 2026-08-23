@@ -219,3 +219,56 @@ body.conn-lost > #app {
 a {
   color: var(--blue);
 }
+
+/* Sparkline charts (5-min bitrate/delay trend), see shared_chart.js */
+.chart-block {
+  margin-top: 0.7em;
+}
+
+.chart-block-label {
+  color: var(--text-dim);
+  font-size: 0.85em;
+  font-weight: 700;
+  margin-bottom: 0.25em;
+}
+
+.chart-svg-wrap {
+  width: 100%;
+  height: 44px;
+  background: var(--bg-raised-2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.chart-svg-wrap svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.chart-svg-wrap.chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-size: 0.82em;
+  font-style: italic;
+}
+
+.chart-caption {
+  color: var(--text-faint);
+  font-size: 0.78em;
+  margin-top: 0.2em;
+}
+
+.chart-line {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.chart-line--bitrate { stroke: var(--blue); }
+.chart-line--delay { stroke: var(--amber); }
+
+.chart-dot { }
+.chart-dot.chart-line--bitrate { fill: var(--blue); }
+.chart-dot.chart-line--delay { fill: var(--amber); }

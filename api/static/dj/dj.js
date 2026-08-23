@@ -244,6 +244,22 @@
       "cq-delay",
       data.delay_seconds != null ? `${data.delay_seconds.toFixed(1)} s` : "nicht ermittelbar"
     );
+
+    // 5-min trend charts - "history" is server-side sampled/stored (see
+    // api/app/main.py's _history_collector_loop), so this is whatever
+    // window the api handed back, not something accumulated in this tab.
+    window.SegueChart.renderSparkline(
+      document.getElementById("cq-chart-bitrate"),
+      document.getElementById("cq-chart-bitrate-caption"),
+      window.SegueChart.toSeries(data.history, "bitrate_kbps"),
+      { unit: " kbit/s", decimals: 0, colorClass: "chart-line--bitrate" }
+    );
+    window.SegueChart.renderSparkline(
+      document.getElementById("cq-chart-delay"),
+      document.getElementById("cq-chart-delay-caption"),
+      window.SegueChart.toSeries(data.history, "delay_seconds"),
+      { unit: " s", decimals: 2, colorClass: "chart-line--delay" }
+    );
   }
 
   function formatConnSince(iso) {

@@ -271,6 +271,17 @@ async def _history_collector_loop() -> None:
                     slot,
                     app.state.lj_read_username,
                     app.state.lj_read_password,
+                    # Longer than the 6s default: nobody's waiting on a
+                    # page load for this background tick, but a slot's
+                    # on-demand HLS muxer (created lazily on first HLS
+                    # request - see mediamtx_stats.py) can genuinely take
+                    # longer than 6s to spin up and produce its first
+                    # segment right after a DJ connects. Confirmed via a
+                    # real RTMP publish: the 6s default intermittently
+                    # timed out on the first couple of collector ticks
+                    # for a freshly-connected slot even though the same
+                    # call succeeds moments later once the muxer is warm.
+                    timeout=15.0,
                 )
                 sample = {
                     "ts": iso_z(datetime.now(timezone.utc)),

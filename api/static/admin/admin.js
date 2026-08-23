@@ -82,6 +82,9 @@
   function showDenied() {
     authorized = false;
     teardownAllPreviews();
+    for (const username of Array.from(detailStatsTimers.keys())) {
+      stopDetailStatsPolling(username);
+    }
     stopPolling();
     if (ws) {
       try { ws.close(); } catch (e) { /* ignore */ }
@@ -190,6 +193,7 @@
     for (const row of Array.from(djRowsEl.querySelectorAll(".dj-row"))) {
       if (!seen.has(row.dataset.username)) {
         teardownPreview(row.dataset.username);
+        stopDetailStatsPolling(row.dataset.username);
         expandedDetails.delete(row.dataset.username);
         row.remove();
       }
@@ -253,6 +257,16 @@
       djDetailField("remote", "Adresse") +
       djDetailField("agent", "Encoder") +
       "</div>" +
+      '<div class="chart-block">' +
+      '<div class="chart-block-label">Bitrate (5 Min.)</div>' +
+      '<div class="chart-svg-wrap" data-chart="bitrate"></div>' +
+      '<div class="chart-caption" data-chart-caption="bitrate"></div>' +
+      "</div>" +
+      '<div class="chart-block">' +
+      '<div class="chart-block-label">Verzögerung DJ→Server (5 Min.)</div>' +
+      '<div class="chart-svg-wrap" data-chart="delay"></div>' +
+      '<div class="chart-caption" data-chart-caption="delay"></div>' +
+      "</div>" +
       '<button class="preview-btn">Vorschau anzeigen</button>' +
       '<div class="preview-wrap hidden"><video class="preview-video" muted playsinline autoplay></video></div>';
     details.querySelector(".preview-btn").addEventListener("click", () => togglePreview(username, row));
@@ -289,7 +303,9 @@
     row.querySelector(".details-btn").textContent = isExpanded ? "Details ausblenden" : "Details";
 
     if (isExpanded) {
-      fetchDjDetails(dj.username, detailsEl);
+      startDetailStatsPolling(dj.username, detailsEl); // idempotent if already running
+    } else {
+      stopDetailStatsPolling(dj.username);
     }
     if (!dj.connected) {
       // A disconnected DJ's preview would just spin forever - drop it
@@ -298,18 +314,46 @@
     }
   }
 
-  async function fetchDjDetails(username, detailsEl) {
+  // ---- Per-DJ details polling (instantaneous stats + 5-min history) ----
+  //
+  // Dedicated interval per expanded DJ, independent of the ~3s admin
+  // state poll/push cadence (which is irregular - WS pushes fire on any
+  // state change, not on a steady clock). A chart needs evenly-spaced
+  // samples; this mirrors dj.js's own STREAM_STATS_INTERVAL_MS pattern
+  // for its "Verbindungsqualität" card against the same endpoint shape.
+  // Only runs while a DJ's details panel is actually open - stopped on
+  // collapse, on disconnect, and when the row itself is torn down.
+
+  const DETAIL_STATS_INTERVAL_MS = 8000;
+  const detailStatsTimers = new Map(); // username -> intervalId
+
+  function startDetailStatsPolling(username, detailsEl) {
+    if (detailStatsTimers.has(username)) return;
+    const tick = () => fetchAndRenderDetailStats(username, detailsEl);
+    tick();
+    detailStatsTimers.set(username, setInterval(tick, DETAIL_STATS_INTERVAL_MS));
+  }
+
+  function stopDetailStatsPolling(username) {
+    const timer = detailStatsTimers.get(username);
+    if (timer) clearInterval(timer);
+    detailStatsTimers.delete(username);
+  }
+
+  async function fetchAndRenderDetailStats(username, detailsEl) {
     let resp;
     try {
       resp = await authedFetch(`/api/admin/stream/${encodeURIComponent(username)}`);
     } catch (e) {
       return;
     }
+    let data = null;
     try {
-      renderDjDetails(detailsEl, await resp.json());
+      data = await resp.json();
     } catch (e) {
-      // non-fatal, this panel is secondary
+      return;
     }
+    renderDjDetails(detailsEl, data);
   }
 
   function renderDjDetails(detailsEl, data) {
@@ -325,25 +369,43 @@
       set("since", "—");
       set("remote", "—");
       set("agent", "—");
-      return;
+    } else {
+      set("resolution", data.resolution || "unbekannt");
+      set("codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || "unbekannt");
+      set("bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : "wird berechnet…");
+      // Same figure as the DJ's own "Verbindungsqualität" card - this is
+      // DJ-encoder-to-relay delay only, not end-to-end to VRCDN (see
+      // mediamtx_stats.py's module docstring for why that isn't
+      // measurable from here).
+      set("delay", data.delay_seconds != null ? `${data.delay_seconds.toFixed(1)} s` : "unbekannt");
+      set("since", data.connected_since ? formatSince(data.connected_since) : "unbekannt");
+      set("remote", data.remote_addr || "unbekannt");
+      set("agent", data.user_agent || "unbekannt");
     }
-    set("resolution", data.resolution || "unbekannt");
-    set("codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || "unbekannt");
-    set("bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : "wird berechnet…");
-    // Same figure as the DJ's own "Verbindungsqualität" card - this is
-    // DJ-encoder-to-relay delay only, not end-to-end to VRCDN (see
-    // mediamtx_stats.py's module docstring for why that isn't measurable
-    // from here).
-    set("delay", data.delay_seconds != null ? `${data.delay_seconds.toFixed(1)} s` : "unbekannt");
-    set("since", data.connected_since ? formatSince(data.connected_since) : "unbekannt");
-    set("remote", data.remote_addr || "unbekannt");
-    set("agent", data.user_agent || "unbekannt");
+
+    // 5-min trend charts - "history" is server-side sampled/stored (see
+    // api/app/main.py's _history_collector_loop), shared across every
+    // viewer rather than accumulated in this tab.
+    const history = data && data.history;
+    window.SegueChart.renderSparkline(
+      detailsEl.querySelector('[data-chart="bitrate"]'),
+      detailsEl.querySelector('[data-chart-caption="bitrate"]'),
+      window.SegueChart.toSeries(history, "bitrate_kbps"),
+      { unit: " kbit/s", decimals: 0, colorClass: "chart-line--bitrate" }
+    );
+    window.SegueChart.renderSparkline(
+      detailsEl.querySelector('[data-chart="delay"]'),
+      detailsEl.querySelector('[data-chart-caption="delay"]'),
+      window.SegueChart.toSeries(history, "delay_seconds"),
+      { unit: " s", decimals: 2, colorClass: "chart-line--delay" }
+    );
   }
 
   function toggleDetails(username) {
     if (expandedDetails.has(username)) {
       expandedDetails.delete(username);
       teardownPreview(username);
+      stopDetailStatsPolling(username);
     } else {
       expandedDetails.add(username);
     }

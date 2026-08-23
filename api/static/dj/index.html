@@ -307,6 +307,16 @@
         Verzögerung durch das OBS des Betreibers und den Push zu VRCDN,
         die von hier aus nicht messbar ist.
       </p>
+      <div class="chart-block">
+        <div class="chart-block-label">Bitrate (5 Min.)</div>
+        <div class="chart-svg-wrap" id="cq-chart-bitrate"></div>
+        <div class="chart-caption" id="cq-chart-bitrate-caption"></div>
+      </div>
+      <div class="chart-block">
+        <div class="chart-block-label">Delay DJ→Server (5 Min.)</div>
+        <div class="chart-svg-wrap" id="cq-chart-delay"></div>
+        <div class="chart-caption" id="cq-chart-delay-caption"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -333,6 +343,7 @@
   <div class="box">Verbindung zum Server verloren</div>
 </div>
 
+<script src="/static/shared_chart.js"></script>
 <script src="/static/dj/dj.js"></script>
 </body>
 </html>
