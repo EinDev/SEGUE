@@ -639,7 +639,14 @@ async def dj_view(request: Request) -> FileResponse:
 @app.get("/api/dj/me")
 async def dj_state(request: Request) -> dict:
     username = get_identity(request)
+    is_new = not app.state.db.dj_exists(username)
     app.state.db.get_or_create_dj(username)  # self-register on first visit
+    if is_new:
+        # Not part of the pushed on-air/mode state, so without this the
+        # admin roster would only pick up a fresh signup on next reload
+        # (its own poll loop stops once its websocket is up).
+        app.state.db.log_event(f"{username} hat sich angemeldet")
+        await manager.broadcast()
     state = app.state.state_manager.get_dj_state(username)
     state["dj"]["credentials"] = _dj_credentials(username)
     return state

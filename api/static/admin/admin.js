@@ -28,6 +28,8 @@
   let authorized = false;
   let rosterError = null; // { username, message } shown inline on that row
   let rosterByUsername = {}; // username -> {username, ready, slot, connected, created_at}
+  let lastRosterDjs = [];
+  let pendingDeleteUsername = null; // armed inline "wirklich löschen?" state
   let latestAdminState = null;
   const expandedDetails = new Set(); // usernames with the details panel open
   const activePreviews = new Map(); // username -> Hls instance, or `true` for native HLS playback
@@ -496,19 +498,23 @@
   }
 
   function renderRoster(djs) {
+    lastRosterDjs = djs || [];
     rosterByUsername = {};
-    for (const dj of djs || []) {
+    for (const dj of lastRosterDjs) {
       rosterByUsername[dj.username] = dj;
     }
+    if (pendingDeleteUsername && !rosterByUsername[pendingDeleteUsername]) {
+      pendingDeleteUsername = null; // row is gone (deleted elsewhere) -- drop the armed state
+    }
     rosterRowsEl.innerHTML = "";
-    if (!djs || djs.length === 0) {
+    if (lastRosterDjs.length === 0) {
       const empty = document.createElement("div");
       empty.className = "text-faint";
       empty.textContent = "Noch niemand hat sich über den DJ-Link angemeldet.";
       rosterRowsEl.appendChild(empty);
       return;
     }
-    for (const dj of djs) {
+    for (const dj of lastRosterDjs) {
       const row = document.createElement("div");
       row.className = "roster-row";
 
@@ -527,22 +533,49 @@
       const spacer = document.createElement("div");
       spacer.className = "spacer";
 
-      const toggle = document.createElement("button");
-      toggle.className = "ready-toggle" + (dj.ready ? " on" : "");
-      toggle.textContent = dj.ready ? "Bereit" : "Nicht bereit";
-      toggle.addEventListener("click", () => setReady(dj.username, !dj.ready));
-
-      const del = document.createElement("button");
-      del.className = "delete-btn";
-      del.textContent = "Löschen";
-      del.addEventListener("click", () => deleteDj(dj.username));
-
       row.appendChild(name);
       row.appendChild(pill);
       row.appendChild(slot);
       row.appendChild(spacer);
-      row.appendChild(toggle);
-      row.appendChild(del);
+
+      if (pendingDeleteUsername === dj.username) {
+        const confirmText = document.createElement("span");
+        confirmText.className = "confirm-text";
+        confirmText.textContent = "Wirklich löschen?";
+
+        const yes = document.createElement("button");
+        yes.className = "confirm-yes-btn";
+        yes.textContent = "Ja";
+        yes.addEventListener("click", () => deleteDj(dj.username));
+
+        const no = document.createElement("button");
+        no.className = "confirm-no-btn";
+        no.textContent = "Abbrechen";
+        no.addEventListener("click", () => {
+          pendingDeleteUsername = null;
+          renderRoster(lastRosterDjs);
+        });
+
+        row.appendChild(confirmText);
+        row.appendChild(yes);
+        row.appendChild(no);
+      } else {
+        const toggle = document.createElement("button");
+        toggle.className = "ready-toggle" + (dj.ready ? " on" : "");
+        toggle.textContent = dj.ready ? "Bereit" : "Nicht bereit";
+        toggle.addEventListener("click", () => setReady(dj.username, !dj.ready));
+
+        const del = document.createElement("button");
+        del.className = "delete-btn";
+        del.textContent = "Löschen";
+        del.addEventListener("click", () => {
+          pendingDeleteUsername = dj.username;
+          renderRoster(lastRosterDjs);
+        });
+
+        row.appendChild(toggle);
+        row.appendChild(del);
+      }
 
       if (rosterError && rosterError.username === dj.username) {
         const err = document.createElement("div");
@@ -574,10 +607,7 @@
   }
 
   async function deleteDj(username) {
-    if (!window.confirm(`${username} wirklich löschen? Der Stream-Key wird ungültig; ` +
-      "eine erneute Anmeldung landet wieder in der Freischaltungs-Warteschlange.")) {
-      return;
-    }
+    pendingDeleteUsername = null;
     rosterError = null;
     try {
       await authedFetch(`/api/djs/${encodeURIComponent(username)}`, { method: "DELETE" });
@@ -712,6 +742,15 @@
     }, 400);
   }
 
+  let rosterDebounceTimer = null;
+  function fetchRosterDebounced() {
+    if (rosterDebounceTimer) return;
+    rosterDebounceTimer = setTimeout(() => {
+      rosterDebounceTimer = null;
+      fetchRoster();
+    }, 400);
+  }
+
   async function fetchLog() {
     let resp;
     try {
@@ -769,6 +808,7 @@
         // them opportunistically (debounced so a burst of pushes doesn't
         // hammer the endpoints).
         fetchLogDebounced();
+        fetchRosterDebounced();
       } catch (e) {
         // ignore malformed message
       }
