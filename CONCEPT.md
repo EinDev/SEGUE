@@ -1,8 +1,9 @@
 # SEGUE — Implementierungs-Spezifikation
 
-Audio-Stream-Switcher für VRChat-Club-Events. Mehrere DJs speisen parallel ein,
-ein einziger Ausgangsmount bleibt permanent live, Umschalten passiert serverseitig
-ohne Unterbrechung. Deployment als Docker-Compose-Stack in Coolify.
+Video-Stream-Switcher für VRChat-Club-Events. Mehrere DJs speisen parallel ihre
+Visuals ein, das Umschalten zwischen ihnen passiert glitchfrei im OBS des
+Event-Operators (nicht mehr serverseitig - siehe Abschnitt 2/5). Deployment als
+Docker-Compose-Stack in Coolify.
 
 Dieses Dokument ist die vollständige Vorgabe für die Implementierung. Alles, was
 hier nicht steht, ist bewusst offen und darf sinnvoll entschieden werden — aber die
@@ -12,77 +13,103 @@ Zustandslogik in Abschnitt 4 ist normativ und muss exakt so umgesetzt werden.
 
 ## 1. Problem und Ziel
 
-Bei einem VRChat-Club-Event wechseln sich mehrere DJs ab. Wenn jeder DJ einzeln zum
-CDN sendet, reißt der Stream bei jedem Wechsel ab. Folge: alle Zuschauer müssen den
-Videoplayer neu laden, laufen in Timeouts und Rate Limits, und bei Twitch als Quelle
-kommt zusätzlich Preroll-Werbung, weil jeder Reconnect als neuer Stream gilt.
+Bei einem VRChat-Club-Event wechseln sich mehrere DJs mit eigenen Visuals ab. Wenn
+jeder DJ einzeln zum CDN sendet, reißt der Stream bei jedem Wechsel ab. Folge: alle
+Zuschauer müssen den Videoplayer neu laden, laufen in Timeouts und Rate Limits, und
+bei Twitch als Quelle kommt zusätzlich Preroll-Werbung, weil jeder Reconnect als
+neuer Stream gilt.
 
-Lösung: Ein Server nimmt alle DJs gleichzeitig entgegen und bedient genau einen
-Ausgangsmount, der nie stirbt. Der lokale OBS des Betreibers zieht diesen Mount und
-sendet zu VRCDN. Der Ausgangsstream wird nie gestoppt, also muss niemand reloaden.
+Lösung: Ein schlanker Relay-Server (MediaMTX) nimmt alle DJ-Videostreams
+gleichzeitig entgegen, ohne sie zu transcodieren oder zu mischen - reines
+Publish/Read-Relay. Das eigentliche Umschalten passiert nicht auf dem Server,
+sondern im lokalen OBS des Event-Operators: jeder DJ-Slot ist dort eine eigene,
+dauerhaft verbundene Quelle, und ein kleines Steuerskript (`lj-controller/`)
+schaltet per Sichtbarkeit zwischen ihnen um, synchron zur selben
+AUTO/MANUAL/Pin-Logik wie zuvor (Abschnitt 4, unverändert). OBS sendet wie schon
+vorher zu VRCDN. Der Server bleibt bewusst dumm und günstig zu betreiben - alle
+Rechenlast für Encoding/Switching liegt beim Operator, der die dafür nötige
+Hardware ohnehin für OBS/VRCDN mitbringt.
 
 ### Nicht-Ziele
 
-- Kein Video. Reines Audio.
-- Kein Ersatz für OBS. Der Push zu VRCDN passiert außerhalb dieses Projekts.
-- Keine Musikbibliothek, kein Scheduling, keine Playlists außer dem Filler.
-- Keine Hörer-Skalierung. Genau ein Consumer (OBS), plus optional ein
-  Monitor-Mount mit niedriger Bitrate.
+- Kein serverseitiges Compositing/Transcoding/Switching. Der Server relayt nur;
+  jede Form von "Mischen" passiert im OBS des Operators.
+- Kein Ersatz für OBS auf DJ- oder Operator-Seite. Beide Enden (Publish wie
+  Read/VRCDN-Push) sind eigenständiges OBS, außerhalb dieses Projekts.
+- Keine Musikbibliothek, kein Scheduling, keine Playlists. Der frühere
+  Audio-Filler-Fallback existiert serverseitig nicht mehr - "niemand on air"
+  wird stattdessen durch eine vom Operator konfigurierte Standby-Quelle in OBS
+  dargestellt (siehe `lj-controller/README.md`).
+- Keine Hörer-Skalierung. Genau ein Consumer pro Slot (das Operator-OBS), keine
+  öffentliche Playback-Verteilung durch dieses System.
 
 ---
 
 ## 2. Systemübersicht
 
 ```
-DJ 1 (Mixxx / VirtualDJ / BUTT) ─┐
-DJ 2 ────────────────────────────┼──► liquidsoap: input.harbor (ein Mount pro DJ)
-DJ 3 ────────────────────────────┘              │
-                                                ▼
-                                        switch() mit Prädikaten
-                                                │
-                                                ▼
-                                   output.harbor /live  (MP3)
-                                                │
-                                                ▼
-                                   Lokales OBS (VLC Source)
-                                                │
-                                                ▼
-                                            VRCDN
+DJ 1 (OBS, RTMP-Push) ─┐
+DJ 2 ───────────────────┼──► mediamtx: ein RTMP-Slot pro DJ (reines Relay,
+DJ 3 ───────────────────┘     kein Transcode/Mix)
+                                       │  RTSP, ein Read pro Slot,
+                                       │  dauerhaft verbunden
+                                       ▼
+                        Lokales OBS des Operators
+                        (eine Source pro Slot + Standby,
+                         Umschalten = Sichtbarkeit toggeln)
+                                       │
+                                       ▼
+                                    VRCDN
 ```
 
 Steuerung und Anzeige:
 
 ```
-liquidsoap ◄── telnet (Kommandos) ──── api (FastAPI)
-     │                                    ▲    │
-     └── HTTP-Webhook (connect/disconnect)┘    │ WebSocket
-                                               ▼
-                                    web (Admin-View + DJ-Views)
+mediamtx ── HTTP-Auth + HTTP-Webhook (connect/disconnect) ──► api (FastAPI)
+                                                                 │
+                            ┌────────────────────────────────────┼──────────────────┐
+                            ▼                                    ▼                  ▼
+                     WebSocket /ws/lj                     WebSocket /ws       WebSocket /ws/dj
+                     lj-controller (Python,                Admin-View            DJ-Views
+                     läuft beim Operator,
+                     steuert OBS per
+                     obs-websocket)
 ```
 
 ---
 
 ## 3. Services
 
-Drei Container, ein Compose-Stack.
+Zwei Container im Compose-Stack, plus ein eigenständiges Skript beim Operator.
 
-### 3.1 `liquidsoap`
+### 3.1 `mediamtx`
 
-- Basis: offizielles Liquidsoap-Image, Version 2.x pinnen (kein `latest`).
-- Rendert beim Start `main.liq` aus `config/djs.yaml` über ein kleines
-  Python-Jinja-Skript im Entrypoint. Grund: die Anzahl der DJ-Slots und deren
-  Mounts/Passwörter sind Konfiguration, nicht Code.
+- Basis: offizielles MediaMTX-Image, gepinnte Release-Version (kein `latest`),
+  neu geschichtet auf ein Debian-Base-Image, damit `curl` für die
+  Hook-Callbacks verfügbar ist (das offizielle Image ist `FROM scratch`).
+- Statische `mediamtx.yml`, **kein** Rendering/Templating beim Start nötig:
+  Auth läuft live gegen `api` (`authHTTPAddress`), ein einziges
+  Regex-Pfadmuster (`~^slot[0-9]+$`) deckt jede Slot-Anzahl ab.
+  `ONAIR_MAX_DJS` zu erhöhen erfordert deshalb keinen Neustart dieses
+  Containers mehr (Unterschied zum alten Liquidsoap-Verhalten).
 - Exponiert:
-  - `8005/tcp` — Harbor-Ingest für DJs
-  - `8000/tcp` — Ausgangsmount für OBS
-  - `1234/tcp` — Telnet, **nur im internen Compose-Netz**, niemals nach außen
-- Volumes: `./config` (ro), `./filler` (ro), `./logs`
+  - `1935/tcp` — RTMP-Ingest für DJs (Publish)
+  - `8554/tcp` — RTSP-Read für das Operator-OBS
+  - `9997/tcp` — Control-API, **nur im internen Compose-Netz**, niemals nach
+    außen (direktes Analogon zum alten Telnet-Port)
+- Kein Volume für Musik/Config nötig (kein Filler-Konzept mehr serverseitig,
+  siehe Abschnitt 1) - nur die `mediamtx.yml` selbst wird read-only gemountet.
 
 ### 3.2 `api`
 
 - Python 3.12, FastAPI, Uvicorn.
-- Hält die Zustandsmaschine, spricht Telnet zu Liquidsoap, empfängt die
-  Harbor-Webhooks, bedient REST und WebSocket.
+- Hält die Zustandsmaschine (Abschnitt 4, unverändert), pollt MediaMTX'
+  Control-API als Reconciliation-Fallback, empfängt dessen Auth-Checks und
+  Connect/Disconnect-Webhooks, bedient REST und WebSocket für drei
+  Konsumenten: Admin-View, DJ-Views, und den `lj-controller` (Abschnitt 3.4).
+  Anders als zuvor **kommandiert** `api` nichts mehr Richtung Medienpfad -
+  MediaMTX kennt kein "on air", das Umschalten passiert ausschließlich
+  clientseitig im Operator-OBS.
 - SQLite unter `./data/onair.db` für persistenten Modus/Pin und das Eventlog.
 - Exponiert `8080/tcp` (HTTP), wird von Coolify geproxyt.
 
@@ -94,6 +121,17 @@ Teile, weniger was am Eventabend kaputtgehen kann.
 
 Falls doch ein Framework gewünscht ist: dann Vite-Build in ein `dist/`, das im
 api-Image mitkopiert wird. Aber kein separater Node-Container zur Laufzeit.
+
+### 3.4 `lj-controller`
+
+- Kein Teil des Compose-Stacks - läuft eigenständig auf dem Rechner des
+  Event-Operators, neben dessen OBS.
+- Python-Asyncio-Skript: hält `/ws/lj` offen (Fallback auf HTTP-Polling von
+  `/api/lj/state`), spiegelt den empfangenen `on_air`-Wert per
+  `obs-websocket` (Sichtbarkeits-Toggle innerhalb einer festen Szene) ins
+  lokale OBS.
+- Details, Setup und die kritische "Close file when inactive"-Einstellung:
+  siehe `lj-controller/README.md`.
 
 ---
 
@@ -148,66 +186,63 @@ verzögert. Stille verkürzen hat Vorrang.
 
 ---
 
-## 5. Liquidsoap-Kern
+## 5. MediaMTX-Konfiguration
 
-Gerüst, kein fertiger Code — Funktionsnamen gegen die verwendete 2.x-Version
-prüfen, zwischen 1.x und 2.x hat sich einiges verschoben.
+Statische `mediamtx.yml` (siehe `mediamtx/mediamtx.yml`), kein Templating - die
+volle Begründung steht im Kommentarblock am Dateianfang dort. Kernstück:
 
-```liquidsoap
-# Zielquelle, wird per Telnet gesetzt
-target = ref("FILLER")
-
-dj1 = input.harbor("dj1", port=8005, password="...")
-dj2 = input.harbor("dj2", port=8005, password="...")
-
-filler = playlist("/filler", mode="randomize", reload_mode="watch")
-safety = blank()
-
-radio = switch(
-  track_sensitive=false,
-  transition_length=0.4,
-  [
-    ({ !target == "dj1" }, dj1),
-    ({ !target == "dj2" }, dj2),
-    ({ true }, fallback(track_sensitive=false, [filler, safety]))
-  ]
-)
-
-output.harbor(%mp3(bitrate=320), port=8000, mount="/live", radio)
+```yaml
+paths:
+  "~^slot[0-9]+$":
+    runOnAvailable: >
+      sh -c 'curl ... /internal/mediamtx/event ... "event":"connect" ...'
+    runOnUnavailable: >
+      sh -c 'curl ... /internal/mediamtx/event ... "event":"disconnect" ...'
 ```
 
 Wichtige Punkte:
 
-- `track_sensitive=false` ist Pflicht, sonst wartet der Switch auf ein Trackende,
-  das bei einem Live-Mount nie kommt.
-- Der letzte Zweig ist bedingungslos wahr. Damit kann `radio` niemals leer laufen,
-  und der Ausgangsmount stirbt nie. Das ist die zentrale Eigenschaft des ganzen
-  Systems.
-- `blank()` als letzter Fallback hinter dem Filler, falls das Filler-Verzeichnis
-  leer oder kaputt ist.
-- Übergangslänge 0.4s. Kürzer klickt, länger matscht bei Hardstyle.
+- Kein `switch()`, kein Crossfade, kein "on air"-Konzept auf dieser Ebene mehr -
+  MediaMTX relayt jeden verbundenen Slot unverändert weiter. Das serverseitige
+  Analogon zu `track_sensitive=false`/dem bedingungslos-wahren letzten Zweig
+  gibt es nicht mehr, weil es nichts mehr gibt, das hier umschalten könnte; die
+  entsprechende Garantie ("nie leer/tot") verschiebt sich auf die
+  Sichtbarkeits-Toggle-Logik im `lj-controller` (Abschnitt 3.4) plus die
+  Standby-Quelle im Operator-OBS.
+- `authHTTPExclude: [api]` ist notwendig, sonst würde `api`s eigenes
+  Control-API-Polling (siehe 5.1) fälschlich gegen DJ/LJ-Credentials geprüft.
+- Ein einziges Regex-Pfadmuster für alle Slots (kein Rendering pro
+  `ONAIR_MAX_DJS`, siehe Abschnitt 3.1).
 
-### 5.1 Telnet-Kommandos
+### 5.1 Control-API (Ersatz für Telnet-Kommandos)
 
-Zu registrieren:
+MediaMTX hat kein Kommando-Interface wie Liquidsoaps Telnet - es gibt nichts
+mehr zu kommandieren. Was bleibt, ist reines Polling zur Reconciliation:
+`api` fragt periodisch `GET /v3/paths/list` auf MediaMTX' internem
+Control-API (Port 9997, siehe 3.1) ab und vergleicht das Ergebnis gegen den
+intern gehaltenen `connected`-Zustand - derselbe Sicherheitsnetz-Zweck, den
+`onair.status` vorher hatte.
 
-- `onair.set <dj_id|FILLER>` — setzt `target`, gibt neuen Wert zurück
-- `onair.status` — gibt JSON mit `target` und dem Ready-Status aller Harbor-Inputs
-  zurück. Wird von der API beim Start und alle 5 Sekunden als Reconciliation
-  abgefragt.
+### 5.2 Auth- und Event-Hooks (Ersatz für Harbor-Callbacks)
 
-### 5.2 Harbor-Callbacks
-
-`on_connect` und `on_disconnect` jedes Harbor-Inputs feuern einen HTTP-POST an
-`http://api:8080/internal/harbor/event` mit `{dj_id, event, ts}` und dem
-Shared Secret im Header. Der Callback darf niemals blockieren — bei einem Fehler
-loggen und weitermachen, nie den Audiopfad aufhalten.
+- `authHTTPAddress` → `POST /internal/mediamtx/auth`: MediaMTX ruft dies bei
+  **jedem** Publish- und Read-Versuch auf (JSON-Body mit `user`, `password`,
+  `action`, `path`, ...). `action == "publish"`: Zugangsdaten müssen zu einem
+  bereiten DJ **und** dessen zugewiesenem Slot passen. `action == "read"`:
+  geprüft gegen das eine geteilte `ONAIR_LJ_READ_USERNAME`/`PASSWORD`-Paar.
+- `runOnAvailable`/`runOnUnavailable` → `POST /internal/mediamtx/event`: feuert,
+  wenn ein Slot einen lesbaren Publisher bekommt/verliert - direktes Analogon
+  zu Liquidsoaps `on_connect`/`on_disconnect`. Anders als vorher trägt dieses
+  Event **keinen Benutzernamen** (MediaMTX kennt DJs nicht als Konzept) - `api`
+  rekonstruiert ihn aus einer beim Auth-Check befüllten In-Memory-Zuordnung
+  Slot→Username, mit DB-Fallback für den Fall eines `api`-Neustarts mitten in
+  einer Verbindung.
 
 ### 5.3 Eingangsformate
 
-Harbor muss MP3, Ogg Vorbis und AAC annehmen. Mixxx sendet ohne LAME
-standardmäßig Ogg Vorbis, Traktor kann historisch nur Ogg. Das darf kein
-Ausschlusskriterium sein.
+RTMP-Publish, H.264-Video + AAC-Audio (OBS' Standardausgabe für sein
+"Benutzerdefiniert..."-Stream-Ziel). Kein Transcoding auf dem Server - was ein
+DJ sendet, kommt bit-identisch beim Operator-OBS an.
 
 ---
 
@@ -236,11 +271,32 @@ Der reduzierte Zustand enthält: eigener Status, eigene Zugangsdaten, Anzeigenam
 und Verbindungsstatus **aller** DJs, wer on air ist, aktueller Modus. Er enthält
 **niemals** die Passwörter oder Tokens anderer DJs.
 
+### 6.2a LJ-Sicht (statischer Token, kein Authentik)
+
+```
+GET    /api/lj/state             → Header X-Onair-Lj-Token, sonst 403
+WS     /ws/lj                    → Header X-Onair-Lj-Token, sonst 403
+```
+
+Für den `lj-controller` (Abschnitt 3.4) - kein Mensch, keine Authentik-Session,
+daher ein statisches geteiltes Token (`ONAIR_LJ_TOKEN`) statt des
+Proxy-Headers. Antwortform wie der volle Zustand, plus pro bereitem DJ `slot`
+und eine serverseitig fertig zusammengesetzte `rtsp_url`
+(`rtsp://<ljread-user>:<ljread-pass>@<host>:<port>/<slot>`) - der Controller
+konstruiert diese URL nie selbst.
+
 ### 6.3 Intern
 
 ```
-POST   /internal/harbor/event    → Header X-Onair-Secret, sonst 403
+POST   /internal/mediamtx/event  → Header X-Onair-Secret, sonst 403
+POST   /internal/mediamtx/auth   → Header X-Onair-Secret, sonst 403
+                                    Body: {user, password, action, path, ip, ...}
+                                    200 = erlaubt, 403 = abgelehnt
 ```
+
+Ersetzt die alten `/internal/harbor/*`-Endpunkte 1:1 in ihrer Rolle (siehe
+Abschnitt 5.2), nur mit MediaMTX' Request-Shape statt Liquidsoaps
+GET-Query-Params.
 
 ### 6.4 Zustandsobjekt
 
@@ -266,7 +322,7 @@ nachvollziehen. Beispiele: „Auto: nur Nova verbunden", „Manuell gepinnt auf 
 „Gepinnter DJ offline, Filler läuft".
 
 `warning` wird gesetzt bei: gepinntem DJ offline, mehreren Verbundenen ohne
-klare Auswahl im AUTO-Modus, Telnet-Verbindung zu Liquidsoap tot.
+klare Auswahl im AUTO-Modus, Verbindung zu MediaMTX tot.
 
 ---
 
@@ -328,12 +384,19 @@ djs:
 Environment:
 
 ```
-ONAIR_ADMIN_TOKEN=          # Admin-Login
-ONAIR_INTERNAL_SECRET=      # Webhook Liquidsoap → API
-ONAIR_LIQUIDSOAP_HOST=liquidsoap
-ONAIR_LIQUIDSOAP_TELNET_PORT=1234
-ONAIR_HARBOR_PUBLIC_HOST=   # was den DJs angezeigt wird
-ONAIR_HARBOR_PUBLIC_PORT=8005
+ONAIR_ADMIN_USERNAME=        # Authentik-Username des Admins
+ONAIR_AUTH_USERNAME_HEADER=X-authentik-username
+ONAIR_INTERNAL_SECRET=       # Webhook/Auth mediamtx → api
+ONAIR_MEDIAMTX_HOST=mediamtx
+ONAIR_MEDIAMTX_API_PORT=9997
+ONAIR_RTMP_PUBLIC_HOST=      # was DJs als RTMP-Server angezeigt wird
+ONAIR_RTMP_PUBLIC_PORT=1935
+ONAIR_RTSP_PUBLIC_HOST=      # was der lj-controller als RTSP-Quelle nutzt
+ONAIR_RTSP_PUBLIC_PORT=8554
+ONAIR_LJ_TOKEN=              # Shared Secret für den lj-controller
+ONAIR_LJ_READ_USERNAME=      # RTSP-Lesezugangsdaten, eine geteilte Identität
+ONAIR_LJ_READ_PASSWORD=
+ONAIR_MAX_DJS=6
 ONAIR_DEBOUNCE_SECONDS=2
 ONAIR_DB_PATH=/data/onair.db
 ```
@@ -345,27 +408,26 @@ CLI-Kommando `onair tokens` gibt die fertigen Links zum Verschicken aus.
 
 ## 9. Deployment in Coolify
 
-Als Docker-Compose-Ressource anlegen. Zwei Dinge, die hier erfahrungsgemäß
+Als Docker-Compose-Ressource anlegen. Dinge, die hier erfahrungsgemäß
 schiefgehen:
 
-**Die Harbor-Ports dürfen nicht durch den Reverse Proxy.** Coolify routet HTTP
-über Traefik. Das Icecast-Source-Protokoll benutzt aber teils die `SOURCE`-Methode
-statt sauberem `PUT`, und daran verschlucken sich Proxies. Ports 8005 und 8000
-deshalb direkt per `ports:` veröffentlichen und in der Firewall freigeben. Nur der
-API-Container läuft über die Coolify-Domain mit TLS.
+**Die RTMP/RTSP-Ports dürfen nicht durch den Reverse Proxy.** Coolify routet
+HTTP über Traefik; weder RTMP noch RTSP überleben dahinter. Ports 1935 und
+8554 deshalb direkt per `ports:` veröffentlichen und in der Firewall
+freigeben. Nur der API-Container läuft über die Coolify-Domain mit TLS.
 
-**Volumes müssen persistent sein**, sonst sind nach jedem Redeploy die DJ-Tokens
-neu und alle verschickten Links tot:
+**Das `./data`-Volume muss persistent sein**, sonst sind nach jedem Redeploy
+alle DJ-Zugangsdaten neu und der gesamte Roster ist weg:
 
 ```
 ./data     → SQLite
-./config   → djs.yaml
-./filler   → Musik für die Lücken
-./logs     → Liquidsoap-Logs
 ```
 
-Healthchecks: `api` auf `GET /healthz`, `liquidsoap` auf einen TCP-Connect gegen
-den Telnet-Port. `restart: unless-stopped` für beide.
+(Kein `./filler`/`./logs`-Volume mehr nötig - MediaMTX loggt nach stdout und
+kennt kein Filler-Konzept, siehe Abschnitt 1.)
+
+Healthchecks: `api` auf `GET /healthz`, `mediamtx` auf `GET /v3/paths/list`
+gegen sein internes Control-API. `restart: unless-stopped` für beide.
 
 ---
 
@@ -373,13 +435,14 @@ den Telnet-Port. `restart: unless-stopped` für beide.
 
 | Fall | Verhalten |
 |---|---|
-| Liquidsoap startet neu | API erkennt Telnet-Abriss, zeigt Warnung, reconnected mit Backoff, holt Zustand per `onair.status` und schreibt `mode`/`pinned` aus SQLite zurück |
-| API startet neu | Zustand aus SQLite laden, Verbindungen per `onair.status` von Liquidsoap holen. Liquidsoap ist die Wahrheit über Verbindungen, SQLite über Absichten |
-| DJ verbindet mit falschem Passwort | Loggen mit Mount und IP, im Admin-Log sichtbar. Häufigster Supportfall am Abend |
-| Zwei DJs auf demselben Mount | Harbor lehnt den zweiten ab. Im Log deutlich machen |
-| Filler-Verzeichnis leer | `blank()` greift, Warnung im Admin-View. Der Ausgangsmount stirbt trotzdem nicht |
-| OBS trennt die Verbindung zum Ausgangsmount | Nichts weiter tun. Liquidsoap sendet ins Leere, OBS reconnected von selbst |
-| Netzwerk des Betreibers weg | Außerhalb des Systems. Erwähnen, dass OBS lokal eine Backup-Audiodatei als Ersatzquelle haben sollte |
+| mediamtx startet neu | API erkennt fehlgeschlagenes Control-API-Polling, zeigt Warnung, reconnected mit Backoff, holt Verbindungen per `/v3/paths/list` und schreibt `mode`/`pinned` aus SQLite zurück |
+| API startet neu | Zustand aus SQLite laden, Verbindungen per `/v3/paths/list` von mediamtx holen. mediamtx ist die Wahrheit über Verbindungen, SQLite über Absichten |
+| DJ verbindet mit falschem Passwort | Loggen mit Slot und IP, im Admin-Log sichtbar. Häufigster Supportfall am Abend |
+| Zwei DJs auf demselben Slot | mediamtx lehnt den zweiten Publish ab. Im Log deutlich machen |
+| Niemand on air | `on_air = FILLER` wie bisher (Abschnitt 4, unverändert); der `lj-controller` schaltet die Standby-Quelle sichtbar - kein serverseitiger Fallback mehr nötig |
+| lj-controller verliert die Verbindung zu `api` oder OBS | Beide Seiten degradieren auf "eingefroren beim letzten bekannten Zustand" statt zu blanken; Reconnect mit Backoff auf beiden Verbindungen unabhängig voneinander |
+| Operator-OBS trennt die Verbindung zu VRCDN | Außerhalb dieses Systems, wie zuvor. OBS reconnected von selbst |
+| Netzwerk des Betreibers weg | Außerhalb des Systems. Kein automatischer Ersatz - siehe README "What can go wrong" |
 
 ---
 
@@ -387,32 +450,41 @@ den Telnet-Port. `restart: unless-stopped` für beide.
 
 Die Implementierung gilt als fertig, wenn:
 
-1. Zwei parallel verbundene DJs möglich sind und das Umschalten zwischen ihnen im
-   Ausgangsmount keine Unterbrechung erzeugt — nachweisbar dadurch, dass ein
-   dauerhaft laufender Consumer den Wechsel überlebt, ohne neu zu verbinden.
-2. Der Ausgangsmount über einen kompletten Testlauf inklusive Filler-Phasen und
-   Liquidsoap-Neustart der DJ-Container nie abreißt.
+1. Zwei parallel verbundene DJs möglich sind, und ein dauerhaft mitlesender
+   RTSP-Consumer (z. B. `ffplay`) auf jedem Slot nie abreißt, unabhängig davon,
+   wer gerade `on_air` ist - MediaMTX kennt kein "on air" und relayt beide
+   Slots immer gleich.
+2. Ein Wechsel im Operator-OBS (Sichtbarkeits-Toggle durch `lj-controller`)
+   keinen sichtbaren Reconnect/Rebuffer erzeugt - Voraussetzung: "Close file
+   when inactive" ist auf jeder Slot-Source deaktiviert (siehe
+   `lj-controller/README.md`).
 3. Alle Regeln aus Abschnitt 4 durch Unit-Tests der Auflösungsfunktion abgedeckt
    sind, inklusive: gepinnter DJ disconnected → Filler; gepinnter DJ reconnected →
    sofort wieder on air; AUTO mit mehreren Verbundenen springt nicht von selbst.
-4. Die DJ-View den Tally-Wechsel binnen einer Sekunde nach der Umschaltung anzeigt.
-5. Ein Redeploy in Coolify die DJ-Links nicht invalidiert.
+   (Unverändert - diese Tests laufen ohne Anpassung weiter, siehe
+   `api/tests/test_state.py`.)
+4. Der `lj-controller` den Sichtbarkeits-Wechsel binnen einer Sekunde nach der
+   `on_air`-Änderung anwendet.
+5. Ein Redeploy in Coolify weder die DJ-Zugangsdaten noch den `lj-controller`
+   (unabhängiger Prozess) beeinträchtigt.
 
 ---
 
 ## 12. Reihenfolge der Umsetzung
 
-1. Liquidsoap-Skript mit zwei fest verdrahteten DJs, Filler und `output.harbor`.
-   Manuell per Telnet umschalten und mit einem Player gegenprüfen, dass es
-   nicht abreißt. Erst wenn das steht, lohnt der Rest.
-2. Config-Rendering aus `djs.yaml`.
-3. API mit Zustandsmaschine, Tests zuerst.
-4. Webhooks und Telnet-Anbindung.
-5. Admin-View.
-6. DJ-View mit Tally.
-7. Compose, Volumes, Healthchecks, Coolify.
-8. Lasttest mit drei gleichzeitigen Encodern und mindestens zwanzig Wechseln
-   am Stück.
+1. MediaMTX-Config mit zwei fest verdrahteten Test-Slots. Manuell per RTMP
+   einspeisen und mit einem RTSP-Player (`ffplay`) gegenprüfen, dass der
+   Relay nicht abreißt. Erst wenn das steht, lohnt der Rest.
+2. API-Zustandsmaschine (unverändert, Abschnitt 4) auf MediaMTX' Auth-/
+   Webhook-Shape ummünzen, Tests zuerst.
+3. Admin-View, DJ-View (Anpassung der Zugangsdaten-Anzeige auf RTMP-Server/
+   Stream-Key).
+4. `lj-controller`: erst die api-WebSocket-Anbindung, dann obs-websocket,
+   zuletzt beides zusammen gegen ein echtes Test-OBS.
+5. Compose, Healthchecks, Coolify.
+6. Lasttest mit drei gleichzeitigen Encodern und mindestens zwanzig Wechseln
+   am Stück, inklusive absichtlichem mediamtx- und api-Neustart mitten im
+   Test.
 
 ---
 
@@ -420,9 +492,12 @@ Die Implementierung gilt als fertig, wenn:
 
 Nicht Teil der Implementierung, aber vor dem ersten Event zu klären:
 
-- Latenzsumme messen: Encoder + Harbor-Buffer + VLC-Cache in OBS + VRCDN. Relevant
-  fürs Lichtpult, weil Licht und Ton sonst auseinanderlaufen.
-- Testtermin mit allen DJs auf einem separaten Test-Mount. Wer rekordbox oder
-  Serato fährt, braucht Virtual Audio Cable plus BUTT und sollte das nicht zehn
-  Minuten vor dem Set das erste Mal sehen.
-- Entscheiden, ob der Filler echte Musik oder ein Jingle-Loop sein soll.
+- Latenzsumme messen: DJ-OBS-Encoder + MediaMTX-Relay + Operator-OBS-RTSP-Read
+  + VRCDN. Relevant fürs Lichtpult, weil Licht und Ton sonst
+  auseinanderlaufen - jetzt umso wichtiger, da RTMP/RTSP-Pufferverhalten sich
+  vom alten MP3/Icecast-Pfad unterscheidet und dieser Mechanismus neu ist.
+- Testtermin mit allen DJs auf einem separaten Test-Slot, insbesondere weil
+  Stream-Key-eingebettete Zugangsdaten (`slot?user=...&pass=...`) neu sind -
+  niemand sollte das erste Mal zehn Minuten vor dem Set damit hantieren.
+- Standby-Inhalt für OBS festlegen (Loop-Video oder Standbild), analog zur
+  früheren Filler-Entscheidung, jetzt aber als OBS-Quelle statt Playlist.

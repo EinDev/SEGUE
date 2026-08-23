@@ -1,36 +1,29 @@
 services:
-  liquidsoap:
-    build: ./liquidsoap
+  mediamtx:
+    build: ./mediamtx
     restart: unless-stopped
     environment:
       ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
-      ONAIR_MAX_DJS: ${ONAIR_MAX_DJS:-6}
-      ONAIR_LIQUIDSOAP_TELNET_PORT: ${ONAIR_LIQUIDSOAP_TELNET_PORT:-1234}
-      ONAIR_HARBOR_PORT: ${ONAIR_HARBOR_PORT:-8005}
-      ONAIR_OUTPUT_PORT: ${ONAIR_OUTPUT_PORT:-8000}
-      ONAIR_WEBHOOK_URL: ${ONAIR_WEBHOOK_URL:-http://api:8080/internal/harbor/event}
-      ONAIR_AUTH_CHECK_URL: ${ONAIR_AUTH_CHECK_URL:-http://api:8080/internal/harbor/auth}
     volumes:
-      - ./filler:/filler:ro
-      - ./logs:/logs
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
     ports:
-      # Harbor ingest and the live output mount must bypass Traefik entirely
-      # (Icecast's SOURCE method breaks behind a reverse proxy) - published
-      # directly to the host, not routed through Coolify's domain/TLS layer.
-      # Host-side port is split from the container-internal port (which
-      # stays ONAIR_HARBOR_PORT/ONAIR_OUTPUT_PORT above) so a collision with
-      # something else already bound to 8005/8000 on a shared host can be
-      # fixed by setting ONAIR_HARBOR_HOST_PORT/ONAIR_OUTPUT_HOST_PORT in
-      # .env, without touching this file or the DJ-facing internal port.
-      - "${ONAIR_HARBOR_HOST_PORT:-8005}:${ONAIR_HARBOR_PORT:-8005}"
-      - "${ONAIR_OUTPUT_HOST_PORT:-8000}:${ONAIR_OUTPUT_PORT:-8000}"
-      # NOTE: the telnet control port (1234) is intentionally NOT published
-      # here and NOT listed under `expose:` either. It must stay reachable
-      # only from other containers on this compose network (the `api`
-      # service talks to it as liquidsoap:1234) and never from the host or
-      # the internet.
+      # RTMP publish (DJs) and RTSP read (the LJ machine's OBS) must bypass
+      # Traefik entirely, same reasoning the old harbor ports had: neither
+      # protocol's handshake survives an HTTP reverse proxy. Host-side port
+      # is split from the container-internal port (fixed at 1935/8554 in
+      # mediamtx/mediamtx.yml) so a collision with something else already
+      # bound to those ports on a shared host can be fixed by setting
+      # ONAIR_RTMP_HOST_PORT/ONAIR_RTSP_HOST_PORT in .env, without touching
+      # this file.
+      - "${ONAIR_RTMP_HOST_PORT:-1935}:1935"
+      - "${ONAIR_RTSP_HOST_PORT:-8554}:8554"
+      # NOTE: the control API (9997) is intentionally NOT published here
+      # and NOT listed under `expose:` either - same treatment the old
+      # telnet port got. It must stay reachable only from other containers
+      # on this compose network (the `api` service polls it as
+      # mediamtx:9997) and never from the host or the internet.
     healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 1234), timeout=3)"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9997/v3/paths/list"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -40,16 +33,21 @@ services:
     build: ./api
     restart: unless-stopped
     depends_on:
-      - liquidsoap
+      - mediamtx
     environment:
       ONAIR_ADMIN_USERNAME: ${ONAIR_ADMIN_USERNAME}
       ONAIR_AUTH_USERNAME_HEADER: ${ONAIR_AUTH_USERNAME_HEADER:-X-authentik-username}
       ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
       ONAIR_MAX_DJS: ${ONAIR_MAX_DJS:-6}
-      ONAIR_LIQUIDSOAP_HOST: ${ONAIR_LIQUIDSOAP_HOST:-liquidsoap}
-      ONAIR_LIQUIDSOAP_TELNET_PORT: ${ONAIR_LIQUIDSOAP_TELNET_PORT:-1234}
-      ONAIR_HARBOR_PUBLIC_HOST: ${ONAIR_HARBOR_PUBLIC_HOST}
-      ONAIR_HARBOR_PUBLIC_PORT: ${ONAIR_HARBOR_PUBLIC_PORT:-8005}
+      ONAIR_MEDIAMTX_HOST: ${ONAIR_MEDIAMTX_HOST:-mediamtx}
+      ONAIR_MEDIAMTX_API_PORT: ${ONAIR_MEDIAMTX_API_PORT:-9997}
+      ONAIR_RTMP_PUBLIC_HOST: ${ONAIR_RTMP_PUBLIC_HOST}
+      ONAIR_RTMP_PUBLIC_PORT: ${ONAIR_RTMP_PUBLIC_PORT:-1935}
+      ONAIR_RTSP_PUBLIC_HOST: ${ONAIR_RTSP_PUBLIC_HOST}
+      ONAIR_RTSP_PUBLIC_PORT: ${ONAIR_RTSP_PUBLIC_PORT:-8554}
+      ONAIR_LJ_TOKEN: ${ONAIR_LJ_TOKEN}
+      ONAIR_LJ_READ_USERNAME: ${ONAIR_LJ_READ_USERNAME}
+      ONAIR_LJ_READ_PASSWORD: ${ONAIR_LJ_READ_PASSWORD}
       ONAIR_DEBOUNCE_SECONDS: ${ONAIR_DEBOUNCE_SECONDS:-2}
       ONAIR_DB_PATH: ${ONAIR_DB_PATH:-/data/onair.db}
     volumes:

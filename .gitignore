@@ -5,17 +5,12 @@
 data/*
 !data/.gitkeep
 
-# Liquidsoap logs
-logs/*
-!logs/.gitkeep
-
-# Filler audio (operator's own music, not project source)
-filler/*
-!filler/.gitkeep
-
 # Python
 __pycache__/
 *.pyc
+
+# LJ controller: operator-local secrets/config, one per venue setup
+lj-controller/config.yaml
 
 # Editor/OS cruft
 .DS_Store

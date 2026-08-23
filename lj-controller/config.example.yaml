@@ -1,0 +1,41 @@
+# Copy this file to config.yaml (gitignored, same treatment as the repo's
+# top-level .env) and fill in real values.
+
+# Base URL of the deployed api service - either the public Coolify domain
+# or a LAN address if this machine and the server share a network at the
+# venue. wss:// is used automatically for an https:// base_url.
+api_base_url: "https://your-domain.example/"
+
+# Must exactly match ONAIR_LJ_TOKEN on the server - this is how the
+# controller authenticates instead of an Authentik login (it isn't a human
+# clicking through a browser).
+lj_token: "change-me"
+
+# obs-websocket connection (Tools -> WebSocket Server Settings in OBS,
+# available from OBS 28 on). Defaults match a fresh obs-websocket install
+# on the same machine the controller runs on.
+obs_ws_url: "ws://localhost:4455"
+obs_ws_password: "change-me"
+
+# The one OBS scene containing every DJ source plus the standby source.
+# Switching is done by toggling visibility of items *within* this scene,
+# never by changing the active scene or a source's URL - see this
+# directory's README for why.
+scene_name: "Live"
+
+# Shown whenever on_air is FILLER (nobody eligible) or the controller can't
+# yet resolve on_air (e.g. right after (re)connecting to the api).
+standby_source: "Standby"
+
+# Maps each harbor slot to the name of its OBS source within `scene_name`.
+# Set this up once for ONAIR_MAX_DJS slots regardless of who is actually
+# assigned a given slot on any particular night - slot assignment is
+# dynamic (see the admin panel's DJ-Verwaltung), the OBS source per slot
+# is not.
+slot_sources:
+  slot1: "DJ Source 1"
+  slot2: "DJ Source 2"
+  slot3: "DJ Source 3"
+  slot4: "DJ Source 4"
+  slot5: "DJ Source 5"
+  slot6: "DJ Source 6"

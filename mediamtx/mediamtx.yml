@@ -1,0 +1,93 @@
+# SEGUE's MediaMTX config. Unlike the old liquidsoap/main.liq.j2, this file
+# is NOT rendered from a template at container boot - it's committed as-is.
+# Liquidsoap needed per-slot rendering because each harbor mount's auth
+# closure was baked in at startup; MediaMTX instead authenticates every
+# publish/read attempt live against the api container (authHTTPAddress
+# below), so one regex path definition covers every slot regardless of
+# ONAIR_MAX_DJS. Raising ONAIR_MAX_DJS therefore no longer needs a restart
+# of this service at all - only api needs to know the new ceiling (see
+# .env.example).
+#
+# Values that vary by deployment (the shared secret, the api hostname) are
+# NOT template variables here - they're read straight out of the container's
+# environment by the runOnAvailable/runOnUnavailable shell commands below
+# (they run via `sh -c`, which sees whatever docker-compose.yaml's
+# `environment:` sets), and by MediaMTX's own MTX_<KEY> env var override
+# mechanism for anything else that needs to differ per deployment.
+
+logLevel: info
+logDestinations: [stdout]
+
+# --- RTMP: DJ publish ------------------------------------------------------
+# DJs point OBS's "Custom..." stream service here (Server = rtmp://<public
+# host>:1935, Stream Key = "<slot>?user=<username>&pass=<password>" - see
+# api's _dj_credentials()). Published directly to the host, bypassing
+# Traefik entirely, same reasoning as the old harbor port 8005: RTMP's
+# handshake doesn't survive an HTTP reverse proxy.
+rtmp: yes
+rtmpAddress: :1935
+
+# --- RTSP: LJ machine read --------------------------------------------------
+# The event operator's OBS pulls each connected DJ's slot from here as a
+# persistent Media Source (see lj-controller/README.md for the "keep every
+# slot always connected, switch by toggling visibility" requirement - this
+# is what keeps a switch glitch-free instead of forcing a reconnect).
+# Published directly to the host for the same reason as RTMP above.
+rtsp: yes
+rtspAddress: :8554
+# TCP only - avoids opening a UDP port range on the host for a feature
+# (RTSP-over-UDP) nothing here uses.
+rtspTransports: [tcp]
+
+# --- Everything else this deployment doesn't use, off on purpose -----------
+hls: no
+webrtc: no
+srt: no
+metrics: no
+playback: no
+
+# --- Control API -------------------------------------------------------
+# The direct analogue of Liquidsoap's telnet port: api polls
+# /v3/paths/list here for reconciliation (the same role onair.status
+# played before). NEVER published to the host and NEVER listed under
+# `ports:`/`expose:` in docker-compose.yaml - reachable only from other
+# containers on the compose network, exactly like the old telnet port.
+api: yes
+apiAddress: :9997
+
+# --- Publish/read authentication --------------------------------------------
+# Every publish AND every read is checked against api's live DB/credentials.
+# See api/app/main.py's /internal/mediamtx/auth for the actual decision
+# logic (publish: per-DJ username/password matched to their assigned slot;
+# read: the single shared ONAIR_LJ_READ_USERNAME/PASSWORD pair used by the
+# LJ machine's OBS). "api" is excluded so this container's own control-API
+# polling (api's mediamtx_client, checking /v3/paths/list) doesn't get
+# routed through DJ/LJ credential checks it has nothing to do with - that
+# endpoint's protection is the same as the old telnet port's: never
+# published to the host, reachable only from other containers on this
+# compose network.
+authMethod: http
+authHTTPAddress: http://api:8080/internal/mediamtx/auth
+authHTTPExclude: [api]
+
+paths:
+  # Matches slot1..slotN for any ONAIR_MAX_DJS - see the file header for why
+  # this doesn't need to be templated per-slot the way Liquidsoap's did.
+  "~^slot[0-9]+$":
+    # Fires when a slot's publisher starts/stops being readable - the
+    # analogue of Liquidsoap's on_connect/on_disconnect harbor callbacks.
+    # `|| true` mirrors the old webhook's "never block/kill the audio path
+    # on a delivery failure" rule (see main.liq.j2's notify()) - a failed
+    # curl here must never take down the publisher's connection.
+    runOnAvailable: >
+      sh -c 'curl -s -m 5 -X POST http://api:8080/internal/mediamtx/event
+      -H "X-Onair-Secret: $ONAIR_INTERNAL_SECRET"
+      -H "Content-Type: application/json"
+      -d "{\"path\":\"$MTX_PATH\",\"event\":\"connect\",\"ts\":$(date +%s)}"
+      || true'
+    runOnUnavailable: >
+      sh -c 'curl -s -m 5 -X POST http://api:8080/internal/mediamtx/event
+      -H "X-Onair-Secret: $ONAIR_INTERNAL_SECRET"
+      -H "Content-Type: application/json"
+      -d "{\"path\":\"$MTX_PATH\",\"event\":\"disconnect\",\"ts\":$(date +%s)}"
+      || true'

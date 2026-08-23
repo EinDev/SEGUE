@@ -2,24 +2,28 @@
 
 ``resolve()`` is a pure function with zero I/O -- it is the thing
 tests/test_state.py exercises directly. Everything else in this module
-(``StateManager``) wires that pure function up to the telnet client, SQLite
-persistence, and websocket broadcast, including the 2s debounce for
-connect/disconnect events described in CONCEPT.md §4.4 / the task prompt §5.
+(``StateManager``) wires that pure function up to the MediaMTX polling
+client, SQLite persistence, and websocket broadcast (admin, DJ, and LJ
+controller sockets), including the 2s debounce for connect/disconnect
+events described in CONCEPT.md §4.4 / the task prompt §5.
+
+Unlike the old Liquidsoap-backed version, StateManager never pushes a
+decision anywhere -- MediaMTX is a dumb relay with no "on air" concept of
+its own, so switching happens entirely client-side in the LJ's OBS, driven
+by broadcasting on_air over /ws/lj. This module's only output is that
+broadcast.
 
 FILLER is represented as the literal string "FILLER" throughout, matching
-the wire protocol used by both the telnet contract and the REST API.
+the wire protocol used by the REST/WS API.
 """
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Dict, Optional, Set
 
 FILLER = "FILLER"
-
-logger = logging.getLogger("segue.state")
 
 
 def resolve(
@@ -92,7 +96,6 @@ def iso_z(dt: datetime) -> str:
     return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-TelnetSetTarget = Callable[[str], Awaitable[None]]
 BroadcastCb = Callable[[], Awaitable[None]]
 LogFn = Callable[[str], None]
 
@@ -101,7 +104,6 @@ LogFn = Callable[[str], None]
 class StateManager:
     db: object  # app.db.Database -- duck-typed here to avoid a circular import
     debounce_seconds: float
-    telnet_set_target: TelnetSetTarget
     on_broadcast: BroadcastCb
     log_event: LogFn
     save_settings: Callable[[str, Optional[str]], None]
@@ -109,7 +111,7 @@ class StateManager:
     mode: str = "AUTO"
     pinned: Optional[str] = None
     on_air: str = FILLER
-    telnet_alive: bool = False
+    media_alive: bool = False
 
     connected_since: Dict[str, datetime] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -118,8 +120,8 @@ class StateManager:
     # -- helpers -----------------------------------------------------
 
     def _resolve_warning(self) -> Optional[str]:
-        if not self.telnet_alive:
-            return "Telnet-Verbindung zu Liquidsoap tot"
+        if not self.media_alive:
+            return "Verbindung zu MediaMTX tot"
         _, warning = resolve(self.mode, self.pinned, set(self.connected_since), self.on_air)
         return warning
 
@@ -172,40 +174,40 @@ class StateManager:
     # -- lifecycle -----------------------------------------------------
 
     def load_intentions(self, mode: str, pinned: Optional[str]) -> None:
-        """Load mode/pinned from SQLite at startup, before telnet connects."""
+        """Load mode/pinned from SQLite at startup, before MediaMTX connects."""
         self.mode = mode
         self.pinned = pinned
 
-    async def startup_sync(self, connected: Set[str], remote_target: str) -> None:
+    async def startup_sync(self, connected: Set[str]) -> None:
         """One-shot immediate sync on process startup (no debounce).
 
-        Seeds ``connected`` from Liquidsoap's status (already translated
-        from slot ids to usernames by the caller), resolves once using
-        Liquidsoap's current target (also already translated to a username
-        or FILLER) as the baseline on_air, and pushes the result via
-        onair.set if it differs.
+        Seeds ``connected`` from MediaMTX's control API (already translated
+        from slot ids to usernames by the caller) and resolves once against
+        the FILLER baseline -- MediaMTX has no "current target" concept to
+        sync from the way Liquidsoap did (it never performs switching), so
+        there is nothing to push back: resolve()'s existing "multiple
+        connected, ambiguous -- don't guess" rule already does the right
+        thing starting from FILLER.
         """
         async with self._lock:
             now = datetime.now(timezone.utc)
             self.connected_since = {u: now for u in connected}
-            self.on_air = remote_target if remote_target else FILLER
+            self.on_air = FILLER
             new_on_air, _ = resolve(self.mode, self.pinned, set(self.connected_since), self.on_air)
             self.on_air = new_on_air
-            self.telnet_alive = True
-            if new_on_air != remote_target:
-                await self._push_target(new_on_air)
+            self.media_alive = True
             self.log_event("Startup-Synchronisation abgeschlossen")
             await self.on_broadcast()
 
-    async def set_telnet_alive(self, alive: bool) -> None:
+    async def set_media_alive(self, alive: bool) -> None:
         async with self._lock:
-            if alive == self.telnet_alive:
+            if alive == self.media_alive:
                 return
-            self.telnet_alive = alive
+            self.media_alive = alive
             self.log_event(
-                "Telnet-Verbindung zu Liquidsoap wiederhergestellt"
+                "Verbindung zu MediaMTX wiederhergestellt"
                 if alive
-                else "Telnet-Verbindung zu Liquidsoap verloren"
+                else "Verbindung zu MediaMTX verloren"
             )
             await self.on_broadcast()
 
@@ -215,8 +217,8 @@ class StateManager:
         """Treat any discrepancy vs in-memory `connected` like a fresh
         connect/disconnect event, through the same debounced pipeline.
 
-        `connected` is the full set of usernames Liquidsoap currently
-        reports as live on some slot (already translated by the caller).
+        `connected` is the full set of usernames MediaMTX currently reports
+        as live on some slot (already translated by the caller).
         """
         mismatches = []
         async with self._lock:
@@ -294,15 +296,11 @@ class StateManager:
             old = self.on_air
             self.on_air = new_on_air
             self.log_event(f"On Air: {old} -> {new_on_air}")
-            await self._push_target(new_on_air)
+            # Nothing to push anywhere -- switching now happens client-side
+            # in the LJ's OBS, driven by broadcasting the new on_air value
+            # over /ws/lj (see app.main). on_broadcast() below is the whole
+            # notification.
         await self.on_broadcast()
-
-    async def _push_target(self, value: str) -> None:
-        try:
-            await self.telnet_set_target(value)
-        except Exception as exc:  # noqa: BLE001 - must never crash the resolver
-            logger.warning("telnet onair.set failed: %s", exc)
-            self.log_event(f"Telnet-Befehl onair.set {value} fehlgeschlagen: {exc}")
 
     # -- operator-driven events (immediate, no debounce) -----------------
 
