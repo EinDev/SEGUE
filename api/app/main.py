@@ -21,18 +21,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Set
 from urllib.parse import quote
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import mediamtx_client
+from . import mediamtx_client, mediamtx_stats
 from .db import Database, NoFreeSlotError
 from .state import FILLER, StateManager
 
@@ -181,7 +183,14 @@ async def on_startup() -> None:
     db_path = os.environ.get("ONAIR_DB_PATH", "/data/onair.db")
     mediamtx_host = os.environ.get("ONAIR_MEDIAMTX_HOST", "mediamtx")
     mediamtx_api_port = int(os.environ.get("ONAIR_MEDIAMTX_API_PORT", "9997"))
+    mediamtx_hls_port = int(os.environ.get("ONAIR_MEDIAMTX_HLS_PORT", "8888"))
     app.state.mediamtx_base_url = f"http://{mediamtx_host}:{mediamtx_api_port}"
+    app.state.mediamtx_hls_base_url = f"http://{mediamtx_host}:{mediamtx_hls_port}"
+    # Shared client for the stats/preview paths (mediamtx_client.py's own
+    # reconciliation loop keeps its own, shorter-lived client) - reused
+    # across requests so connection pooling/keep-alive actually helps
+    # during a burst of admin-panel polling.
+    app.state.stats_client = httpx.AsyncClient()
 
     db = Database(db_path)
     app.state.db = db
@@ -223,6 +232,9 @@ async def on_shutdown() -> None:
             await task
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
+    client = getattr(app.state, "stats_client", None)
+    if client is not None:
+        await client.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +254,16 @@ async def healthz() -> dict:
 async def get_state(request: Request) -> dict:
     require_admin(request)
     return app.state.state_manager.get_full_state()
+
+
+@app.get("/api/admin/info")
+async def admin_info(request: Request) -> dict:
+    # Static (never changes at runtime), so it's its own tiny endpoint
+    # fetched once at boot rather than folded into /api/state - that dict
+    # is polled/pushed every few seconds via /ws, and there's no reason to
+    # carry a constant string along on every one of those messages.
+    require_admin(request)
+    return {"rtmp_server": f"rtmp://{app.state.rtmp_host}:{app.state.rtmp_port}"}
 
 
 class ModeRequest(BaseModel):
@@ -282,6 +304,56 @@ async def post_filler(request: Request) -> dict:
 async def get_log(request: Request, limit: int = 100) -> list:
     require_admin(request)
     return app.state.db.get_log(limit=limit)
+
+
+# ---------------------------------------------------------------------------
+# Admin: per-connected-DJ stream stats + live preview
+#
+# Two separate things, both admin-only, both sourced from MediaMTX's
+# control API/HLS output (see mediamtx_stats.py for exactly what's real
+# and what isn't - in particular, no claimed end-to-end delay to VRCDN):
+#   - a lightweight JSON stats endpoint (codec/resolution/bitrate/remote
+#     address), cheap enough to poll periodically for every connected DJ
+#     row at once;
+#   - an HLS proxy for an actual live-preview <video>, which the admin
+#     frontend only attaches on demand (per DJ, on click) since each open
+#     preview keeps an on-demand HLS muxer running on mediamtx for as
+#     long as it's open.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/admin/stream/{username}")
+async def admin_stream_stats(username: str, request: Request) -> dict:
+    require_admin(request)
+    dj = app.state.db.get_dj(username)
+    if dj is None or not dj["ready"] or not dj["slot"]:
+        return {"connected": False}
+    stats = await mediamtx_stats.get_ingest_stats(app.state.stats_client, app.state.mediamtx_base_url, dj["slot"])
+    return stats or {"connected": False}
+
+
+_SLOT_RE = re.compile(r"^slot[0-9]+$")
+
+
+@app.get("/api/admin/preview/{slot}/{filename:path}")
+async def admin_preview_proxy(slot: str, filename: str, request: Request) -> Response:
+    require_admin(request)
+    if not _SLOT_RE.match(slot):
+        raise HTTPException(status_code=404, detail="not found")
+    url = f"{app.state.mediamtx_hls_base_url}/{slot}/{filename}"
+    query = request.url.query
+    if query:
+        url = f"{url}?{query}"
+    try:
+        resp = await app.state.stats_client.get(
+            url,
+            auth=(app.state.lj_read_username, app.state.lj_read_password),
+            follow_redirects=True,
+            timeout=10.0,
+        )
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="preview unreachable")
+    media_type = resp.headers.get("content-type", "application/octet-stream")
+    return Response(content=resp.content, status_code=resp.status_code, media_type=media_type)
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +469,30 @@ async def dj_state(request: Request) -> dict:
     state = app.state.state_manager.get_dj_state(username)
     state["dj"]["credentials"] = _dj_credentials(username)
     return state
+
+
+@app.get("/api/dj/me/stream")
+async def dj_own_stream_stats(request: Request) -> dict:
+    # Own-slot connection quality for the "Verbindungsqualitaet" card. See
+    # mediamtx_stats.py's module docstring for exactly what "Verzoegerung
+    # DJ -> Server" does and does not measure - deliberately not marketed
+    # as end-to-end/glass-to-glass, since this server can't see the LJ's
+    # OBS or the push to VRCDN.
+    username = get_identity(request)
+    dj = app.state.db.get_dj(username)
+    if dj is None or not dj["ready"] or not dj["slot"]:
+        return {"connected": False}
+    stats = await mediamtx_stats.get_ingest_stats(app.state.stats_client, app.state.mediamtx_base_url, dj["slot"])
+    if stats is None:
+        return {"connected": False}
+    stats["delay_seconds"] = await mediamtx_stats.get_hls_delay_seconds(
+        app.state.stats_client,
+        app.state.mediamtx_hls_base_url,
+        dj["slot"],
+        app.state.lj_read_username,
+        app.state.lj_read_password,
+    )
+    return stats
 
 
 @app.websocket("/ws/dj")

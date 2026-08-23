@@ -149,6 +149,10 @@
     color: var(--text-faint);
     font-style: italic;
   }
+  #conn-quality-data.hidden { display: none; }
+  #conn-quality-data .format-hint {
+    margin-top: 0.8em;
+  }
 
   /* --- How to connect --- */
   .howto-intro {
@@ -276,6 +280,34 @@
   <div class="card" id="conn-quality">
     <h2>Verbindungsqualität</h2>
     <div id="conn-quality-empty">nicht verfügbar</div>
+    <div id="conn-quality-data" class="hidden">
+      <div class="cred-row">
+        <div class="cred-label">Auflösung</div>
+        <div class="cred-value" id="cq-resolution">—</div>
+      </div>
+      <div class="cred-row">
+        <div class="cred-label">Codec</div>
+        <div class="cred-value" id="cq-codec">—</div>
+      </div>
+      <div class="cred-row">
+        <div class="cred-label">Bitrate</div>
+        <div class="cred-value" id="cq-bitrate">—</div>
+      </div>
+      <div class="cred-row">
+        <div class="cred-label">Verbunden</div>
+        <div class="cred-value" id="cq-since">—</div>
+      </div>
+      <div class="cred-row">
+        <div class="cred-label">Delay DJ→Server</div>
+        <div class="cred-value" id="cq-delay">—</div>
+      </div>
+      <p class="format-hint">
+        Diese Verzögerung misst nur die Strecke von deinem Encoder bis zum
+        Server (inklusive kurzer Pufferung dort) - nicht die zusätzliche
+        Verzögerung durch das OBS des Betreibers und den Push zu VRCDN,
+        die von hier aus nicht messbar ist.
+      </p>
+    </div>
   </div>
 </div>
 

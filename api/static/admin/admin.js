@@ -27,6 +27,10 @@
 
   let authorized = false;
   let rosterError = null; // { username, message } shown inline on that row
+  let rosterByUsername = {}; // username -> {username, ready, slot, connected, created_at}
+  let latestAdminState = null;
+  const expandedDetails = new Set(); // usernames with the details panel open
+  const activePreviews = new Map(); // username -> Hls instance, or `true` for native HLS playback
 
   // ---- Clock: seeded from server_time, ticks locally ----
   let clockOffsetMs = 0;
@@ -77,6 +81,7 @@
 
   function showDenied() {
     authorized = false;
+    teardownAllPreviews();
     stopPolling();
     if (ws) {
       try { ws.close(); } catch (e) { /* ignore */ }
@@ -106,14 +111,35 @@
     });
     fetchLog();
     fetchRoster();
+    fetchAdminInfo();
     if (!clockTimer) {
       clockTimer = setInterval(tickClock, 1000);
+    }
+  }
+
+  // ---- Static admin-only info (RTMP server address) - fetched once, not
+  // part of the polled/pushed state since it never changes at runtime ----
+
+  async function fetchAdminInfo() {
+    let resp;
+    try {
+      resp = await authedFetch("/api/admin/info");
+    } catch (e) {
+      return;
+    }
+    try {
+      const data = await resp.json();
+      const el = document.getElementById("rtmp-server-value");
+      if (el) el.textContent = data.rtmp_server || "—";
+    } catch (e) {
+      // non-fatal, informational only
     }
   }
 
   // ---- Rendering: on-air state ----
 
   function render(state) {
+    latestAdminState = state;
     seedClock(state.server_time);
     tickClock();
 
@@ -132,47 +158,249 @@
     renderDjRows(state);
   }
 
+  // renderDjRows rebuilds row *content* every poll/push, but reuses
+  // existing row/details DOM nodes (keyed by data-username) instead of
+  // tearing the whole list down - a from-scratch rebuild every ~3s would
+  // kill and re-attach any open live-preview <video>/Hls instance
+  // constantly, which is both wasteful and visibly glitchy.
   function renderDjRows(state) {
-    djRowsEl.innerHTML = "";
     const djs = state.djs || [];
     if (djs.length === 0) {
+      teardownAllPreviews();
+      djRowsEl.innerHTML = "";
       const empty = document.createElement("div");
       empty.className = "text-faint";
       empty.textContent = "Noch keine freigeschalteten DJs.";
       djRowsEl.appendChild(empty);
       return;
     }
+    const placeholder = djRowsEl.querySelector(".text-faint");
+    if (placeholder) placeholder.remove();
+
+    const seen = new Set();
     for (const dj of djs) {
-      const row = document.createElement("div");
-      row.className = "dj-row" + (state.on_air === dj.username ? " on-air" : "");
+      seen.add(dj.username);
+      let row = findDjRow(dj.username);
+      if (!row) {
+        row = buildDjRow(dj.username);
+        djRowsEl.appendChild(row);
+      }
+      updateDjRow(row, dj, state);
+    }
+    for (const row of Array.from(djRowsEl.querySelectorAll(".dj-row"))) {
+      if (!seen.has(row.dataset.username)) {
+        teardownPreview(row.dataset.username);
+        expandedDetails.delete(row.dataset.username);
+        row.remove();
+      }
+    }
+  }
 
-      const name = document.createElement("div");
-      name.className = "dj-name";
-      name.textContent = dj.username;
+  function findDjRow(username) {
+    for (const row of djRowsEl.querySelectorAll(".dj-row")) {
+      if (row.dataset.username === username) return row;
+    }
+    return null;
+  }
 
-      const pill = document.createElement("span");
-      pill.className = "pill " + (dj.connected ? "pill-connected" : "pill-disconnected");
-      pill.textContent = dj.connected ? "verbunden" : "nicht verbunden";
+  function buildDjRow(username) {
+    const row = document.createElement("div");
+    row.className = "dj-row";
+    row.dataset.username = username;
 
-      const since = document.createElement("div");
-      since.className = "dj-since";
-      since.textContent = dj.connected ? formatSince(dj.since) : "";
+    const top = document.createElement("div");
+    top.className = "dj-row-top";
 
-      const spacer = document.createElement("div");
-      spacer.className = "spacer";
+    const name = document.createElement("div");
+    name.className = "dj-name";
+    name.textContent = username;
 
-      const btn = document.createElement("button");
-      btn.className = "onair-btn";
-      btn.textContent = "On Air schalten";
-      btn.disabled = !dj.connected;
-      btn.addEventListener("click", () => pinDj(dj.username));
+    const pill = document.createElement("span");
+    pill.className = "pill";
 
-      row.appendChild(name);
-      row.appendChild(pill);
-      row.appendChild(since);
-      row.appendChild(spacer);
-      row.appendChild(btn);
-      djRowsEl.appendChild(row);
+    const since = document.createElement("div");
+    since.className = "dj-since";
+
+    const spacer = document.createElement("div");
+    spacer.className = "spacer";
+
+    const detailsBtn = document.createElement("button");
+    detailsBtn.className = "details-btn";
+    detailsBtn.textContent = "Details";
+    detailsBtn.addEventListener("click", () => toggleDetails(username));
+
+    const onairBtn = document.createElement("button");
+    onairBtn.className = "onair-btn";
+    onairBtn.textContent = "On Air schalten";
+    onairBtn.addEventListener("click", () => pinDj(username));
+
+    top.appendChild(name);
+    top.appendChild(pill);
+    top.appendChild(since);
+    top.appendChild(spacer);
+    top.appendChild(detailsBtn);
+    top.appendChild(onairBtn);
+
+    const details = document.createElement("div");
+    details.className = "dj-details hidden";
+    details.innerHTML =
+      '<div class="dj-details-grid">' +
+      djDetailField("resolution", "Auflösung") +
+      djDetailField("codec", "Codec") +
+      djDetailField("bitrate", "Bitrate") +
+      djDetailField("since", "Verbunden") +
+      djDetailField("remote", "Adresse") +
+      djDetailField("agent", "Encoder") +
+      "</div>" +
+      '<button class="preview-btn">Vorschau anzeigen</button>' +
+      '<div class="preview-wrap hidden"><video class="preview-video" muted playsinline autoplay></video></div>';
+    details.querySelector(".preview-btn").addEventListener("click", () => togglePreview(username, row));
+
+    row.appendChild(top);
+    row.appendChild(details);
+    return row;
+  }
+
+  function djDetailField(field, label) {
+    return (
+      '<div class="cred-row"><div class="cred-label">' +
+      escapeHtml(label) +
+      '</div><div class="cred-value" data-field="' +
+      field +
+      '">—</div></div>'
+    );
+  }
+
+  function updateDjRow(row, dj, state) {
+    row.classList.toggle("on-air", state.on_air === dj.username);
+    row.querySelector(".dj-name").textContent = dj.username;
+
+    const pill = row.querySelector(".pill");
+    pill.className = "pill " + (dj.connected ? "pill-connected" : "pill-disconnected");
+    pill.textContent = dj.connected ? "verbunden" : "nicht verbunden";
+
+    row.querySelector(".dj-since").textContent = dj.connected ? formatSince(dj.since) : "";
+    row.querySelector(".onair-btn").disabled = !dj.connected;
+
+    const isExpanded = expandedDetails.has(dj.username);
+    const detailsEl = row.querySelector(".dj-details");
+    detailsEl.classList.toggle("hidden", !isExpanded);
+    row.querySelector(".details-btn").textContent = isExpanded ? "Details ausblenden" : "Details";
+
+    if (isExpanded) {
+      fetchDjDetails(dj.username, detailsEl);
+    }
+    if (!dj.connected) {
+      // A disconnected DJ's preview would just spin forever - drop it
+      // rather than leave a dead player attached.
+      teardownPreview(dj.username, detailsEl);
+    }
+  }
+
+  async function fetchDjDetails(username, detailsEl) {
+    let resp;
+    try {
+      resp = await authedFetch(`/api/admin/stream/${encodeURIComponent(username)}`);
+    } catch (e) {
+      return;
+    }
+    try {
+      renderDjDetails(detailsEl, await resp.json());
+    } catch (e) {
+      // non-fatal, this panel is secondary
+    }
+  }
+
+  function renderDjDetails(detailsEl, data) {
+    const set = (field, value) => {
+      const el = detailsEl.querySelector(`[data-field="${field}"]`);
+      if (el) el.textContent = value;
+    };
+    if (!data || !data.connected) {
+      set("resolution", "—");
+      set("codec", "—");
+      set("bitrate", "—");
+      set("since", "—");
+      set("remote", "—");
+      set("agent", "—");
+      return;
+    }
+    set("resolution", data.resolution || "unbekannt");
+    set("codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || "unbekannt");
+    set("bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : "wird berechnet…");
+    set("since", data.connected_since ? formatSince(data.connected_since) : "unbekannt");
+    set("remote", data.remote_addr || "unbekannt");
+    set("agent", data.user_agent || "unbekannt");
+  }
+
+  function toggleDetails(username) {
+    if (expandedDetails.has(username)) {
+      expandedDetails.delete(username);
+      teardownPreview(username);
+    } else {
+      expandedDetails.add(username);
+    }
+    if (latestAdminState) renderDjRows(latestAdminState);
+  }
+
+  // ---- Live preview (admin-only HLS proxy, see app.main's
+  // /api/admin/preview/{slot}/... - lazy-attached per DJ on click, never
+  // auto-played for every connected DJ at once) ----
+
+  function togglePreview(username, row) {
+    const roster = rosterByUsername[username];
+    if (!roster || !roster.slot) return;
+    const wrap = row.querySelector(".preview-wrap");
+    const btn = row.querySelector(".preview-btn");
+
+    if (activePreviews.has(username)) {
+      teardownPreview(username, row.querySelector(".dj-details"));
+      return;
+    }
+
+    wrap.classList.remove("hidden");
+    btn.textContent = "Vorschau ausblenden";
+    const video = wrap.querySelector("video");
+    const src = `/api/admin/preview/${encodeURIComponent(roster.slot)}/index.m3u8`;
+
+    if (window.Hls && window.Hls.isSupported()) {
+      const hls = new window.Hls();
+      hls.loadSource(src);
+      hls.attachMedia(video);
+      video.play().catch(() => {});
+      activePreviews.set(username, hls);
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      // Safari plays HLS natively, no hls.js needed.
+      video.src = src;
+      video.play().catch(() => {});
+      activePreviews.set(username, true);
+    } else {
+      wrap.textContent = "Vorschau in diesem Browser nicht unterstützt.";
+    }
+  }
+
+  function teardownPreview(username, detailsEl) {
+    const active = activePreviews.get(username);
+    if (active && active !== true && typeof active.destroy === "function") {
+      active.destroy();
+    }
+    activePreviews.delete(username);
+    const wrap = (detailsEl || findDjRow(username))?.querySelector(".preview-wrap");
+    const btn = (detailsEl || findDjRow(username))?.querySelector(".preview-btn");
+    if (wrap) {
+      wrap.classList.add("hidden");
+      const video = wrap.querySelector("video");
+      if (video) {
+        video.removeAttribute("src");
+        video.load();
+      }
+    }
+    if (btn) btn.textContent = "Vorschau anzeigen";
+  }
+
+  function teardownAllPreviews() {
+    for (const username of Array.from(activePreviews.keys())) {
+      teardownPreview(username);
     }
   }
 
@@ -187,7 +415,17 @@
 
   // ---- Rendering: DJ roster (registration + ready approval) ----
 
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
   function renderRoster(djs) {
+    rosterByUsername = {};
+    for (const dj of djs || []) {
+      rosterByUsername[dj.username] = dj;
+    }
     rosterRowsEl.innerHTML = "";
     if (!djs || djs.length === 0) {
       const empty = document.createElement("div");

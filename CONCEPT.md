@@ -95,10 +95,18 @@ Zwei Container im Compose-Stack, plus ein eigenständiges Skript beim Operator.
 - Exponiert:
   - `1935/tcp` — RTMP-Ingest für DJs (Publish)
   - `8554/tcp` — RTSP-Read für das Operator-OBS
+  - `8888/tcp` — HLS, **nur im internen Compose-Netz**: liefert die
+    Live-Vorschau-Thumbnails im Admin-Panel, von `api` über
+    `/api/admin/preview/{slot}/...` proxied (siehe 6.1) statt direkt
+    veröffentlicht - nur On-Demand aktiv, kostet also nichts, solange
+    niemand eine Vorschau geöffnet hat.
   - `9997/tcp` — Control-API, **nur im internen Compose-Netz**, niemals nach
     außen (direktes Analogon zum alten Telnet-Port)
 - Kein Volume für Musik/Config nötig (kein Filler-Konzept mehr serverseitig,
-  siehe Abschnitt 1) - nur die `mediamtx.yml` selbst wird read-only gemountet.
+  siehe Abschnitt 1). Die `mediamtx.yml` selbst wird **nicht** gemountet,
+  sondern vom Dockerfile ins Image gebacken - ein Bind-Mount einer
+  einzelnen Datei bricht auf Coolify (siehe docker-compose.yaml's
+  Kommentar dazu).
 
 ### 3.2 `api`
 
@@ -257,7 +265,21 @@ POST   /api/pin       {dj_id}    → setzt Pin, impliziert MANUAL
 POST   /api/filler               → erzwingt FILLER, setzt MANUAL, pinned=null
 GET    /api/log?limit=100        → Eventlog
 WS     /ws                       → Push bei jeder Zustandsänderung
+
+GET    /api/admin/info                     → {rtmp_server} - statisch, einmalig
+GET    /api/admin/stream/{username}        → Ingest-Stats (Codec/Auflösung/
+                                              Bitrate/Adresse/Encoder) für einen
+                                              verbundenen DJ, siehe
+                                              mediamtx_stats.py
+GET    /api/admin/preview/{slot}/{path...} → HLS-Proxy für die Live-Vorschau
+                                              (mit LJ-Read-Credentials gegen
+                                              mediamtx:8888 authentifiziert,
+                                              admin-only)
 ```
+
+`/api/admin/stream` und die parallele DJ-eigene Variante (6.2) liefern
+bewusst **keine** End-zu-Ende-Verzögerung bis VRCDN - das ist von diesem
+Server aus nicht messbar, siehe `mediamtx_stats.py`s Docstring.
 
 ### 6.2 DJ-Sicht (Token in der URL, kein Login)
 
@@ -265,6 +287,10 @@ WS     /ws                       → Push bei jeder Zustandsänderung
 GET    /dj/{token}               → HTML-View
 GET    /api/dj/{token}/state     → reduzierter Zustand
 WS     /ws/dj/{token}            → Push
+GET    /api/dj/me/stream         → eigene Ingest-Stats + "Verzögerung
+                                    DJ → Server" (HLS-Programmzeit-Diff,
+                                    siehe mediamtx_stats.py) - nur der
+                                    eigene Slot, nie der anderer DJs
 ```
 
 Der reduzierte Zustand enthält: eigener Status, eigene Zugangsdaten, Anzeigenamen
@@ -346,16 +372,26 @@ Von oben nach unten:
    - rot, „ON AIR", mit dezent pulsierendem Rand
 2. **Wer läuft gerade.** Name plus wie lange schon.
 3. **Andere DJs.** Namensliste mit Status-Pill. Kein Detail, nur verbunden ja/nein.
-4. **Deine Zugangsdaten.** Host, Port, Mount, User, Passwort, Format-Empfehlung.
-   Copy-Button pro Feld. Passwort standardmäßig maskiert.
-5. **Verbindungsqualität**, wenn verfügbar: eingehende Bitrate, Dropouts der
-   letzten Minuten.
+4. **Deine Zugangsdaten.** RTMP-Server, Stream-Key, Format-Empfehlung.
+   Copy-Button pro Feld. Stream-Key standardmäßig maskiert (er enthält
+   das Passwort als Query-Param, siehe `_dj_credentials()`).
+5. **Verbindungsqualität**, wenn verbunden: Auflösung, Codec, Bitrate seit
+   Verbindungsaufbau, und „Verzögerung DJ → Server" (siehe 6.2/6.1 -
+   bewusst nicht als Ende-zu-Ende/VRCDN-Latenz bezeichnet, weil das von
+   hier aus nicht messbar ist). Alle acht Sekunden neu abgefragt, nur
+   während `connected == true`.
 
 ### 7.2 Admin-View
 
-- Kopfzeile: großer Modus-Umschalter AUTO / MANUAL, aktueller `reason`, Uhrzeit.
-- Eine Zeile pro DJ: Name, Status-Pill, verbunden seit, Bitrate,
+- Kopfzeile: großer Modus-Umschalter AUTO / MANUAL, aktueller `reason`, Uhrzeit,
+  RTMP-Server-Adresse (einmalig geladen, siehe `/api/admin/info`).
+- Eine Zeile pro DJ: Name, Status-Pill, verbunden seit,
   „On Air schalten"-Button. Die aktive Zeile ist rot umrandet.
+- Pro Zeile ein „Details"-Toggle: klappt Codec/Auflösung/Bitrate/Adresse/
+  Encoder auf (siehe 6.1) sowie einen „Vorschau anzeigen"-Button, der erst
+  auf Klick einen HLS-Player (vendored `hls.js`) gegen den Preview-Proxy
+  startet - nie automatisch für alle verbundenen DJs gleichzeitig, um
+  Bandbreite/CPU im Browser des Admins nicht unnötig zu belasten.
 - Warnbanner, wenn `warning` gesetzt ist. Nicht wegklickbar, solange die
   Bedingung besteht.
 - „Filler erzwingen" als deutlich abgesetzter Button.

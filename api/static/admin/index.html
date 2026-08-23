@@ -85,6 +85,14 @@
   }
   .filler-btn:hover { background: #4a3512; }
 
+  .rtmp-info {
+    color: var(--text-dim);
+    font-size: 0.95em;
+    padding: 0.5em 0;
+  }
+  .rtmp-info-label { font-weight: 700; margin-right: 0.4em; }
+  .rtmp-info-value { font-weight: 700; color: var(--text); }
+
   #dj-rows {
     display: flex;
     flex-direction: column;
@@ -92,10 +100,6 @@
   }
 
   .dj-row {
-    display: flex;
-    align-items: center;
-    gap: 1em;
-    flex-wrap: wrap;
     background: var(--bg-raised);
     border: 2px solid var(--border);
     border-radius: var(--radius);
@@ -105,6 +109,13 @@
   .dj-row.on-air {
     border-color: var(--red);
     box-shadow: 0 0 0 1px var(--red) inset;
+  }
+
+  .dj-row-top {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    flex-wrap: wrap;
   }
 
   .dj-row .dj-name {
@@ -126,6 +137,50 @@
     color: #fff;
   }
   .onair-btn:hover:not(:disabled) { background: #ff5c5c; }
+
+  .details-btn {
+    background: var(--bg-raised-2);
+  }
+
+  .dj-details {
+    margin-top: 0.9em;
+    padding-top: 0.9em;
+    border-top: 1px solid var(--border);
+  }
+  .dj-details.hidden { display: none; }
+
+  .dj-details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15em, 1fr));
+    gap: 0 1.5em;
+    margin-bottom: 0.8em;
+  }
+  .dj-details-grid .cred-row {
+    border-bottom: none;
+    padding: 0.3em 0;
+  }
+  .dj-details-grid .cred-label {
+    width: 6em;
+  }
+
+  .preview-btn {
+    background: var(--bg-raised-2);
+    font-size: 0.9em;
+    padding: 0.5em 1em;
+  }
+
+  .preview-wrap {
+    margin-top: 0.8em;
+    max-width: 22em;
+  }
+  .preview-wrap.hidden { display: none; }
+  .preview-video {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border-radius: var(--radius);
+    display: block;
+  }
 
   #eventlog {
     max-height: 360px;
@@ -210,6 +265,11 @@
     <div class="clock" id="clock">--:--:--</div>
   </header>
 
+  <div class="rtmp-info">
+    <span class="rtmp-info-label">RTMP-Server:</span>
+    <span class="rtmp-info-value mono" id="rtmp-server-value">wird geladen…</span>
+  </div>
+
   <div id="warning-banner" class="warning-banner hidden">
     <span class="icon">&#9888;</span>
     <span id="warning-text"></span>
@@ -241,6 +301,7 @@
   <div class="box">Verbindung zum Server verloren</div>
 </div>
 
+<script src="/static/vendor/hls.min.js"></script>
 <script src="/static/admin/admin.js"></script>
 </body>
 </html>

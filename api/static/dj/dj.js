@@ -59,6 +59,7 @@
     errorAppEl.classList.remove("hidden");
     setConnLost(false);
     stopPolling();
+    stopStreamStatsPolling();
     if (ws) {
       try { ws.close(); } catch (e) { /* ignore */ }
       ws = null;
@@ -74,6 +75,7 @@
     errorAppEl.classList.add("hidden");
     pendingAppEl.classList.remove("hidden");
     pendingUsernameEl.textContent = username || "";
+    stopStreamStatsPolling();
   }
 
   function render(state) {
@@ -106,6 +108,12 @@
     renderLiveNow(state);
     renderOtherDjs(state);
     renderCredentials(dj.credentials);
+
+    if (dj.connected) {
+      startStreamStatsPolling();
+    } else {
+      stopStreamStatsPolling();
+    }
   }
 
   function renderLiveNow(state) {
@@ -181,6 +189,69 @@
 
   function setText(id, value) {
     document.getElementById(id).textContent = value != null ? String(value) : "";
+  }
+
+  // ---- Connection quality (own slot only, see mediamtx_stats.py for
+  // what "Delay DJ→Server" does and doesn't measure) ----
+
+  let streamStatsTimer = null;
+  const STREAM_STATS_INTERVAL_MS = 8000;
+
+  function startStreamStatsPolling() {
+    if (streamStatsTimer) return;
+    fetchStreamStats();
+    streamStatsTimer = setInterval(fetchStreamStats, STREAM_STATS_INTERVAL_MS);
+  }
+
+  function stopStreamStatsPolling() {
+    if (streamStatsTimer) {
+      clearInterval(streamStatsTimer);
+      streamStatsTimer = null;
+    }
+    renderStreamStats(null);
+  }
+
+  async function fetchStreamStats() {
+    let resp;
+    try {
+      resp = await fetch("/api/dj/me/stream", { credentials: "same-origin" });
+    } catch (e) {
+      return;
+    }
+    if (!resp.ok) return;
+    try {
+      renderStreamStats(await resp.json());
+    } catch (e) {
+      // non-fatal, this card is secondary
+    }
+  }
+
+  function renderStreamStats(data) {
+    const emptyEl = document.getElementById("conn-quality-empty");
+    const dataEl = document.getElementById("conn-quality-data");
+    if (!data || !data.connected) {
+      emptyEl.classList.remove("hidden");
+      dataEl.classList.add("hidden");
+      return;
+    }
+    emptyEl.classList.add("hidden");
+    dataEl.classList.remove("hidden");
+    setText("cq-resolution", data.resolution || "unbekannt");
+    setText("cq-codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || "unbekannt");
+    setText("cq-bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : "wird berechnet…");
+    setText("cq-since", data.connected_since ? formatConnSince(data.connected_since) : "unbekannt");
+    setText(
+      "cq-delay",
+      data.delay_seconds != null ? `${data.delay_seconds.toFixed(1)} s` : "nicht ermittelbar"
+    );
+  }
+
+  function formatConnSince(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "unbekannt";
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `seit ${hh}:${mm}`;
   }
 
   function escapeHtml(str) {

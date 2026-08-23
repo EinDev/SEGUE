@@ -39,8 +39,20 @@ rtspAddress: :8554
 # (RTSP-over-UDP) nothing here uses.
 rtspTransports: [tcp]
 
+# --- HLS: admin-only live preview thumbnails --------------------------
+# Used only by api's /api/admin/preview/{slot}/... proxy (see
+# api/app/main.py) so the admin panel can show a small live thumbnail per
+# connected DJ before deciding who goes on air - never exposed to the host
+# directly (same internal-only treatment as the control API on 9997), and
+# never used for the actual DJ switch (that's still the LJ's OBS toggling
+# visibility, see lj-controller/). On-demand only (hlsAlwaysRemux stays at
+# its default "no") - MediaMTX only spends CPU remuxing a slot to HLS while
+# something is actually reading it, so a preview nobody has opened costs
+# nothing.
+hls: yes
+hlsAddress: :8888
+
 # --- Everything else this deployment doesn't use, off on purpose -----------
-hls: no
 webrtc: no
 srt: no
 metrics: no
