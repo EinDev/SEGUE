@@ -140,6 +140,10 @@ api-Image mitkopiert wird. Aber kein separater Node-Container zur Laufzeit.
   lokale OBS.
 - Details, Setup und die kritische "Close file when inactive"-Einstellung:
   siehe `lj-controller/README.md`.
+- Der Admin muss dieses Verzeichnis nicht manuell aus dem Repo holen: das
+  Admin-Panel bietet unter "LJ-Setup" einen Download eines fertig für
+  diese Instanz vorausgefüllten Pakets (`config.yaml` mit echten Werten,
+  plus Best-Effort-OBS-Szene mit einer RTSP-Quelle pro Slot) - siehe 6.1.
 
 ---
 
@@ -275,6 +279,16 @@ GET    /api/admin/preview/{slot}/{path...} → HLS-Proxy für die Live-Vorschau
                                               (mit LJ-Read-Credentials gegen
                                               mediamtx:8888 authentifiziert,
                                               admin-only)
+GET    /api/admin/lj/package.zip           → lj-controller/ + fertig
+                                              ausgefüllte config.yaml + die
+                                              OBS-Szene unten, gezippt
+GET    /api/admin/lj/obs-scene.json        → Best-Effort-OBS-Szenensammlung,
+                                              eine RTSP-Quelle pro Slot mit
+                                              echten Zugangsdaten dieser
+                                              Instanz, siehe lj_package.py
+                                              für den Vertrauensgrad pro
+                                              Feld (Format ist von OBS nicht
+                                              offiziell dokumentiert)
 ```
 
 `/api/admin/stream` und die parallele DJ-eigene Variante (6.2) liefern

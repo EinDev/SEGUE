@@ -19,10 +19,12 @@ outside Authentik entirely. It authenticates with a static shared token
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 import secrets
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Set
@@ -34,9 +36,21 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import mediamtx_client, mediamtx_stats
+from . import lj_package, mediamtx_client, mediamtx_stats
 from .db import Database, NoFreeSlotError
-from .state import FILLER, StateManager
+from .state import FILLER, StateManager, iso_z
+
+# Server-side rolling history for the admin/DJ stats charts (5 min of
+# trend at a glance). Deliberately server-side and shared, not
+# accumulated per-browser-tab: multiple viewers (admin + the DJ
+# themself) see the same backfilled window immediately on open, rather
+# than each starting from an empty chart. The tradeoff is explicit and
+# accepted: this runs continuously for every currently-connected slot
+# regardless of whether anyone has a panel open, unlike every other
+# per-slot stats call in this file (those are on-demand,
+# request-triggered only).
+HISTORY_SAMPLE_INTERVAL_SECONDS = 5.0
+HISTORY_WINDOW_SAMPLES = 60  # 60 * 5s = 5 minutes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("segue.api")
@@ -169,6 +183,7 @@ async def on_startup() -> None:
     app.state.max_djs = int(os.environ.get("ONAIR_MAX_DJS", "6"))
     app.state.log_debounce = {}
     app.state.slot_occupants = {}  # slot -> username, populated on publish auth
+    app.state.stat_history = {}  # slot -> deque[{"ts", "bitrate_kbps", "delay_seconds"}]
 
     app.state.rtmp_host = _env("ONAIR_RTMP_PUBLIC_HOST", "")
     app.state.rtmp_port = int(os.environ.get("ONAIR_RTMP_PUBLIC_PORT", "1935"))
@@ -221,6 +236,58 @@ async def on_startup() -> None:
             app.state.mediamtx_base_url, on_first_sync, on_alive_change, on_reconcile
         )
     )
+    app.state.history_task = asyncio.create_task(_history_collector_loop())
+
+
+async def _history_collector_loop() -> None:
+    """Samples ingest bitrate + HLS delay for every currently-connected
+    slot every HISTORY_SAMPLE_INTERVAL_SECONDS, appending into
+    app.state.stat_history (bounded per-slot deques -- see
+    HISTORY_WINDOW_SAMPLES). Powers the 5-minute trend charts on the
+    admin/DJ stats views.
+
+    A slot's history is dropped the moment it's no longer connected,
+    rather than left to age out on its own: a disconnected DJ's stale
+    trend isn't useful, and explicit deletion keeps memory bounded to
+    currently-connected slots only instead of accumulating buffers for
+    every DJ who has ever connected during the event.
+    """
+    while True:
+        try:
+            connected_usernames = set(app.state.state_manager.connected_since)
+            slots_in_use: Set[str] = set()
+            for username in connected_usernames:
+                dj = app.state.db.get_dj(username)
+                if dj and dj["slot"]:
+                    slots_in_use.add(dj["slot"])
+
+            for slot in slots_in_use:
+                ingest = await mediamtx_stats.get_ingest_stats(
+                    app.state.stats_client, app.state.mediamtx_base_url, slot
+                )
+                delay = await mediamtx_stats.get_hls_delay_seconds(
+                    app.state.stats_client,
+                    app.state.mediamtx_hls_base_url,
+                    slot,
+                    app.state.lj_read_username,
+                    app.state.lj_read_password,
+                )
+                sample = {
+                    "ts": iso_z(datetime.now(timezone.utc)),
+                    "bitrate_kbps": ingest.get("bitrate_kbps") if ingest else None,
+                    "delay_seconds": delay,
+                }
+                buf = app.state.stat_history.setdefault(slot, deque(maxlen=HISTORY_WINDOW_SAMPLES))
+                buf.append(sample)
+
+            for slot in list(app.state.stat_history.keys()):
+                if slot not in slots_in_use:
+                    del app.state.stat_history[slot]
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - this loop must never die
+            logger.exception("history collector iteration failed")
+        await asyncio.sleep(HISTORY_SAMPLE_INTERVAL_SECONDS)
 
 
 @app.on_event("shutdown")
@@ -230,6 +297,13 @@ async def on_shutdown() -> None:
         task.cancel()
         try:
             await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+    history_task = getattr(app.state, "history_task", None)
+    if history_task is not None:
+        history_task.cancel()
+        try:
+            await history_task
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
     client = getattr(app.state, "stats_client", None)
@@ -321,15 +395,24 @@ async def get_log(request: Request, limit: int = 100) -> list:
 #     long as it's open.
 # ---------------------------------------------------------------------------
 
+def _slot_history(slot: Optional[str]) -> list:
+    # list(...) copies out of the live deque so the JSON encoder isn't
+    # racing _history_collector_loop mutating it mid-request.
+    if not slot:
+        return []
+    return list(app.state.stat_history.get(slot, []))
+
+
 @app.get("/api/admin/stream/{username}")
 async def admin_stream_stats(username: str, request: Request) -> dict:
     require_admin(request)
     dj = app.state.db.get_dj(username)
     if dj is None or not dj["ready"] or not dj["slot"]:
-        return {"connected": False}
+        return {"connected": False, "history": []}
     stats = await mediamtx_stats.get_ingest_stats(app.state.stats_client, app.state.mediamtx_base_url, dj["slot"])
+    history = _slot_history(dj["slot"])
     if stats is None:
-        return {"connected": False}
+        return {"connected": False, "history": history}
     # Same "Verzoegerung DJ -> Server" figure shown on the DJ's own
     # dashboard - the admin needs this per-DJ to judge stream health
     # before switching, not just the DJ themself.
@@ -340,6 +423,11 @@ async def admin_stream_stats(username: str, request: Request) -> dict:
         app.state.lj_read_username,
         app.state.lj_read_password,
     )
+    # 5-minute trend, server-side sampled/stored - see
+    # _history_collector_loop and HISTORY_SAMPLE_INTERVAL_SECONDS above.
+    # Each sample: {"ts": "...Z", "bitrate_kbps": float|None,
+    # "delay_seconds": float|None}.
+    stats["history"] = history
     return stats
 
 
@@ -366,6 +454,51 @@ async def admin_preview_proxy(slot: str, filename: str, request: Request) -> Res
         raise HTTPException(status_code=502, detail="preview unreachable")
     media_type = resp.headers.get("content-type", "application/octet-stream")
     return Response(content=resp.content, status_code=resp.status_code, media_type=media_type)
+
+
+# ---------------------------------------------------------------------------
+# Admin: LJ controller onboarding kit (pre-filled config, one-click zip, and
+# a ready-to-import OBS scene collection) - see lj_package.py for exactly
+# what's generated and, critically, the confidence-level breakdown on the
+# reverse-engineered OBS scene collection format there.
+# ---------------------------------------------------------------------------
+
+def _public_api_base_url(request: Request) -> str:
+    # Deliberately NOT request.base_url: this app's Dockerfile runs plain
+    # `uvicorn` with no --proxy-headers/--forwarded-allow-ips, so Starlette
+    # has no way to know the real public scheme/host Traefik terminated -
+    # request.base_url would report the container-internal http://host:8080
+    # seen on this side of the proxy, not the real https:// domain. The
+    # raw Host header IS still the real public host, though (Traefik
+    # forwards it unchanged) - and every documented deployment path for
+    # this app already assumes Coolify terminates TLS on the public domain
+    # (same assumption the README/CONCEPT.md make throughout), so https is
+    # hardcoded rather than sniffed.
+    host = request.headers.get("host") or request.url.hostname or "your-domain.example"
+    return f"https://{host}/"
+
+
+@app.get("/api/admin/lj/package.zip")
+async def admin_lj_package(request: Request) -> Response:
+    require_admin(request)
+    api_base_url = _public_api_base_url(request)
+    data = lj_package.build_lj_zip(api_base_url, app.state.lj_token, app.state.max_djs, _lj_rtsp_url)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="segue-lj-controller.zip"'},
+    )
+
+
+@app.get("/api/admin/lj/obs-scene.json")
+async def admin_lj_obs_scene(request: Request) -> Response:
+    require_admin(request)
+    data = lj_package.build_obs_scene_json(_lj_rtsp_url, app.state.max_djs)
+    return Response(
+        content=json.dumps(data, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="segue-obs-scene.json"'},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -493,10 +626,11 @@ async def dj_own_stream_stats(request: Request) -> dict:
     username = get_identity(request)
     dj = app.state.db.get_dj(username)
     if dj is None or not dj["ready"] or not dj["slot"]:
-        return {"connected": False}
+        return {"connected": False, "history": []}
     stats = await mediamtx_stats.get_ingest_stats(app.state.stats_client, app.state.mediamtx_base_url, dj["slot"])
+    history = _slot_history(dj["slot"])
     if stats is None:
-        return {"connected": False}
+        return {"connected": False, "history": history}
     stats["delay_seconds"] = await mediamtx_stats.get_hls_delay_seconds(
         app.state.stats_client,
         app.state.mediamtx_hls_base_url,
@@ -504,6 +638,7 @@ async def dj_own_stream_stats(request: Request) -> dict:
         app.state.lj_read_username,
         app.state.lj_read_password,
     )
+    stats["history"] = history
     return stats
 
 

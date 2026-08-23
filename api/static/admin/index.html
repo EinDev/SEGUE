@@ -243,6 +243,54 @@
     font-size: 0.9em;
     flex-basis: 100%;
   }
+
+  .lj-downloads {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7em;
+    margin-bottom: 0.6em;
+  }
+  .lj-download-btn {
+    display: inline-block;
+    background: var(--blue);
+    color: #fff;
+    font-weight: 700;
+    padding: 0.7em 1.2em;
+    border-radius: var(--radius);
+    text-decoration: none;
+  }
+  .lj-download-btn:hover { background: #5b93fa; }
+  .lj-download-btn-secondary {
+    background: var(--bg-raised-2);
+    color: var(--text);
+  }
+  .lj-download-btn-secondary:hover { background: #262c36; }
+  .lj-downloads-hint {
+    margin-top: -0.2em;
+    margin-bottom: 0.8em;
+    font-size: 0.9em;
+  }
+  .lj-setup-steps summary {
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 1.05em;
+    padding: 0.2em 0;
+  }
+  .lj-setup-steps[open] summary { margin-bottom: 0.5em; }
+  .lj-setup-steps ol {
+    margin: 0;
+    padding-left: 1.3em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+    color: var(--text-dim);
+  }
+  .lj-setup-steps code {
+    font-family: var(--font-mono);
+    background: var(--bg-raised-2);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+  }
 </style>
 </head>
 <body>
@@ -292,6 +340,72 @@
   </div>
 
   <div class="card">
+    <h2>LJ-Setup</h2>
+    <p class="text-faint" style="margin-top: -0.4em; margin-bottom: 0.8em;">
+      Der Operator, der lokal in OBS zwischen den DJs umschaltet ("LJ"),
+      braucht ein eigenes kleines Steuerskript neben seinem OBS - siehe
+      <code>lj-controller/</code> im Repo für den vollen Hintergrund.
+      Hier gibt's alles fertig für diese Instanz vorbereitet zum Download.
+    </p>
+
+    <div class="lj-downloads">
+      <a class="lj-download-btn" href="/api/admin/lj/package.zip">
+        Komplettpaket herunterladen (.zip)
+      </a>
+      <a class="lj-download-btn lj-download-btn-secondary" href="/api/admin/lj/obs-scene.json">
+        Nur OBS-Szene herunterladen (.json)
+      </a>
+    </div>
+    <p class="text-faint lj-downloads-hint">
+      Das Paket enthält bereits die Szene-Datei - der separate Button ist
+      nur praktisch, wenn schon alles andere installiert ist und nur die
+      Szene neu importiert werden soll (z. B. nach Änderung von
+      <code>ONAIR_MAX_DJS</code>).
+    </p>
+
+    <details class="lj-setup-steps">
+      <summary>Setup-Schritte für den LJ</summary>
+      <ol>
+        <li><strong>Voraussetzungen auf dem LJ-Rechner:</strong> OBS 28
+          oder neuer (für obs-websocket, ist ab 28 eingebaut) und
+          Python 3.10+.</li>
+        <li><strong>Paket entpacken</strong>, dann in einem Terminal im
+          entpackten Ordner: <code>pip install -r requirements.txt</code>.</li>
+        <li><strong>OBS-Szene importieren:</strong> OBS &rarr; Szenen-Sammlung
+          &rarr; Importieren &rarr; die mitgelieferte
+          <code>segue-obs-scene.json</code> auswählen. Enthält bereits eine
+          Szene "Live" mit einer Quelle pro DJ-Slot (RTSP, mit den echten
+          Zugangsdaten dieser Instanz) plus einer Standby-Quelle.
+          <strong>Das ist ein Best-Effort-Import</strong> - OBS'
+          Szene-Dateiformat ist nicht offiziell dokumentiert. Falls der
+          Import nicht sauber klappt, unten die manuellen Schritte
+          nutzen, das Paket enthält auch dafür die volle Anleitung
+          (<code>README.md</code>).</li>
+        <li><strong>Kritisch, bei jeder der importierten Quellen
+          prüfen:</strong> Rechtsklick auf die Quelle &rarr;
+          Eigenschaften &rarr; <strong>"Close file when inactive"
+          MUSS deaktiviert sein.</strong> Steht das an, pausiert OBS die
+          Quelle im Hintergrund und jeder Wechsel dorthin verursacht ein
+          sichtbares Ruckeln/Neuverbinden - der gesamte Sinn des
+          Steuerskripts (glitchfreies Umschalten) wäre damit hinfällig.
+          Der Import setzt das zwar bereits korrekt, aber einmal von Hand
+          gegenprüfen kostet zehn Sekunden und erspart eine böse
+          Überraschung am Abend.</li>
+        <li><strong>obs-websocket aktivieren:</strong> Tools &rarr;
+          WebSocket-Server-Einstellungen, aktivieren, Passwort setzen
+          (Port bleibt normalerweise 4455).</li>
+        <li><strong>config.yaml prüfen</strong> (liegt im Paket bereits
+          fertig ausgefüllt, bis auf das obs-websocket-Passwort von eben -
+          das dort eintragen).</li>
+        <li><strong>Starten:</strong> <code>python lj_controller.py</code>
+          in einer sichtbaren Konsole laufen lassen, für die gesamte
+          Dauer des Events - dort stehen alle Reconnects/Wechsel im Log,
+          das ist um 3 Uhr nachts die schnellste Fehlerquelle.</li>
+      </ol>
+    </details>
+  </div>
+
+  <div class="card">
     <h2>Eventlog</h2>
     <div id="eventlog"></div>
   </div>
@@ -302,6 +416,7 @@
 </div>
 
 <script src="/static/vendor/hls.min.js"></script>
+<script src="/static/shared_chart.js"></script>
 <script src="/static/admin/admin.js"></script>
 </body>
 </html>

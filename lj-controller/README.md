@@ -13,6 +13,15 @@ against Windows since that's what's actually run at the venue).
 
 ## Setup
 
+**Fastest path**: the admin panel's "LJ-Setup" card (`/` on the deployed
+instance, admin login required) has a "Komplettpaket herunterladen"
+button - it hands you this whole directory plus a `config.yaml` already
+filled in with this deployment's real values, and a best-effort
+pre-built OBS scene collection (`segue-obs-scene.json`) with one RTSP
+source per DJ slot ready to import. The steps below are what that button
+automates - read them anyway if the scene import doesn't come in clean,
+or if you're setting this up by hand for any reason.
+
 1. **OBS**: create one scene (its name goes in `config.yaml`'s `scene_name`,
    e.g. `"Live"`). Add one Media Source per DJ slot, each pointed at that
    slot's RTSP URL (`rtsp://<read-user>:<read-pass>@<host>:<port>/slotN` -
@@ -39,7 +48,10 @@ against Windows since that's what's actually run at the venue).
 
 3. **Python deps**: `pip install -r requirements.txt` (Python 3.10+).
 
-4. **Config**: copy `config.example.yaml` to `config.yaml` and fill in:
+4. **Config**: if you got this directory from the admin panel's download,
+   `config.yaml` already exists and is already correct except
+   `obs_ws_password` - fill that one in and skip to step 5. Otherwise,
+   copy `config.example.yaml` to `config.yaml` and fill in:
    - `api_base_url` / `lj_token` (the latter must match `ONAIR_LJ_TOKEN`
      on the server)
    - `obs_ws_url` / `obs_ws_password`
