@@ -1,0 +1,62 @@
+settings.server.telnet.set(true)
+settings.server.telnet.bind_addr.set("0.0.0.0")
+settings.server.telnet.port.set({{ telnet_port }})
+
+target = ref("FILLER")
+
+def notify(dj_id, event) =
+  thread.run(fun () ->
+    try
+      ignore(http.post("{{ webhook_url }}",
+        headers=[("X-Onair-Secret", "{{ internal_secret }}"), ("Content-Type", "application/json")],
+        data=json.stringify({dj_id = dj_id, event = event, ts = time()})))
+    catch _ do
+      log(label="onair", "webhook delivery failed, continuing")
+    end
+  )
+end
+{% for dj in djs %}
+def auth_{{ dj.id }}(params) =
+  params.password == "{{ dj.password }}"
+end
+
+{{ dj.id }}_connected = ref(false)
+
+{{ dj.id }} = input.harbor("{{ dj.mount }}", port={{ harbor_port }}, auth=auth_{{ dj.id }}, icy=true,
+  on_connect=fun (_) -> begin {{ dj.id }}_connected := true; notify("{{ dj.id }}", "connect") end,
+  on_disconnect=fun () -> begin {{ dj.id }}_connected := false; notify("{{ dj.id }}", "disconnect") end)
+{% endfor %}
+filler = playlist("/filler", mode="randomize", reload_mode="watch")
+safety = blank()
+
+radio = switch(
+  track_sensitive=false,
+  transition_length=0.4,
+  [
+{% for dj in djs %}
+    ({ target() == "{{ dj.id }}" }, {{ dj.id }}),
+{% endfor %}
+    ({ true }, fallback(track_sensitive=false, [filler, safety]))
+  ]
+)
+
+output.harbor(%mp3(bitrate=320), port={{ output_port }}, mount="/live", radio)
+
+def onair_set(arg) =
+  target := arg
+  target()
+end
+server.register(namespace="onair", usage="set <id>", description="Switch the live on-air target", "set", onair_set)
+
+def onair_status(_) =
+  json.stringify({
+    target = target(),
+    ready = {
+{% for dj in djs %}
+      {{ dj.id }} = {{ dj.id }}_connected(){% if not loop.last %},{% endif %}
+
+{% endfor %}
+    }
+  })
+end
+server.register(namespace="onair", usage="status", description="Report current target and harbor readiness", "status", onair_status)

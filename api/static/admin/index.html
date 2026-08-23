@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>SEGUE — Admin</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+  #login-app {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2em;
+  }
+  #login-app.hidden { display: none; }
+
+  #login-box {
+    width: 100%;
+    max-width: 26em;
+    display: flex;
+    flex-direction: column;
+    gap: 1em;
+  }
+  #login-box h1 {
+    font-size: 1.6em;
+    text-align: center;
+  }
+  #login-box input {
+    width: 100%;
+    padding: 0.8em 1em;
+    font-size: 1.1em;
+  }
+  #login-box button {
+    padding: 0.8em 1em;
+    font-size: 1.1em;
+    background: var(--blue);
+  }
+  #login-box button:hover { background: #4c8ffb; }
+  #login-error {
+    color: var(--red);
+    font-weight: 700;
+    text-align: center;
+    min-height: 1.4em;
+  }
+
+  #app.hidden { display: none; }
+
+  #app {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 1.2em 1.2em 3em 1.2em;
+    display: flex;
+    flex-direction: column;
+    gap: 1.2em;
+  }
+
+  header.top-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1em;
+    justify-content: space-between;
+  }
+
+  .mode-toggle {
+    display: inline-flex;
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .mode-toggle button {
+    border-radius: 0;
+    padding: 0.9em 1.6em;
+    font-size: 1.1em;
+    background: var(--bg-raised);
+  }
+  .mode-toggle button.active {
+    background: var(--blue);
+    color: #fff;
+  }
+  .mode-toggle button.active.mode-manual {
+    background: var(--red);
+  }
+
+  .reason-text {
+    flex: 1 1 260px;
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 1.05em;
+  }
+
+  .clock {
+    font-family: var(--font-mono);
+    font-size: 1.4em;
+    font-weight: 700;
+    color: var(--text);
+    flex-shrink: 0;
+  }
+
+  #warning-banner.hidden { display: none; }
+
+  .filler-btn {
+    background: var(--amber-bg);
+    color: var(--amber);
+    border: 2px solid var(--amber);
+    font-size: 1.05em;
+    padding: 0.8em 1.4em;
+    align-self: flex-start;
+  }
+  .filler-btn:hover { background: #4a3512; }
+
+  #dj-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7em;
+  }
+
+  .dj-row {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    flex-wrap: wrap;
+    background: var(--bg-raised);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9em 1.1em;
+  }
+
+  .dj-row.on-air {
+    border-color: var(--red);
+    box-shadow: 0 0 0 1px var(--red) inset;
+  }
+
+  .dj-row .dj-name {
+    font-weight: 800;
+    font-size: 1.15em;
+    min-width: 8em;
+  }
+
+  .dj-row .dj-since {
+    color: var(--text-dim);
+    font-size: 0.9em;
+    min-width: 10em;
+  }
+
+  .dj-row .spacer { flex: 1; }
+
+  .onair-btn {
+    background: var(--red);
+    color: #fff;
+  }
+  .onair-btn:hover:not(:disabled) { background: #ff5c5c; }
+
+  #eventlog {
+    max-height: 360px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35em;
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+  }
+  .log-row {
+    display: flex;
+    gap: 0.8em;
+    padding: 0.3em 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .log-row:last-child { border-bottom: none; }
+  .log-ts {
+    color: var(--text-faint);
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<div id="login-app">
+  <form id="login-box">
+    <h1>SEGUE Admin</h1>
+    <input type="password" id="login-token" placeholder="Admin-Token" autocomplete="current-password" autofocus>
+    <button type="submit">Anmelden</button>
+    <div id="login-error"></div>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <header class="top-bar">
+    <div class="mode-toggle">
+      <button id="mode-auto-btn" class="mode-auto">AUTO</button>
+      <button id="mode-manual-btn" class="mode-manual">MANUAL</button>
+    </div>
+    <div class="reason-text" id="reason-text">—</div>
+    <div class="clock" id="clock">--:--:--</div>
+  </header>
+
+  <div id="warning-banner" class="warning-banner hidden">
+    <span class="icon">&#9888;</span>
+    <span id="warning-text"></span>
+  </div>
+
+  <button class="filler-btn" id="filler-btn">Filler erzwingen</button>
+
+  <div class="card">
+    <h2>DJs</h2>
+    <div id="dj-rows"></div>
+  </div>
+
+  <div class="card">
+    <h2>Eventlog</h2>
+    <div id="eventlog"></div>
+  </div>
+</div>
+
+<div id="conn-overlay">
+  <div class="box">Verbindung zum Server verloren</div>
+</div>
+
+<script src="admin.js"></script>
+</body>
+</html>

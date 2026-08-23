@@ -1,0 +1,221 @@
+/* SEGUE — shared dark theme for admin and DJ views.
+   Built for a darkened room next to a lighting desk: readable at a glance,
+   from a few meters, not read closely like a document. No bright surfaces,
+   no thin font weights. */
+
+:root {
+  --bg: #0b0d10;
+  --bg-raised: #14171c;
+  --bg-raised-2: #1c2027;
+  --border: #2a2f38;
+  --text: #eef1f5;
+  --text-dim: #9aa4b2;
+  --text-faint: #6b7383;
+
+  --grey: #5a6270;
+  --grey-bg: #2a2e36;
+  --blue: #3b82f6;
+  --blue-bg: #12233f;
+  --red: #ef4444;
+  --red-bg: #3a1414;
+  --amber: #f59e0b;
+  --amber-bg: #3a2a0c;
+  --green: #22c55e;
+
+  --radius: 10px;
+  --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Consolas", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-weight: 500;
+  font-size: 18px;
+  line-height: 1.4;
+  min-height: 100vh;
+}
+
+h1, h2, h3 {
+  font-weight: 700;
+  margin: 0 0 0.5em 0;
+}
+
+button {
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--text);
+  background: var(--bg-raised-2);
+  padding: 0.7em 1.2em;
+  font-size: 1em;
+  transition: background 0.15s ease, transform 0.05s ease;
+}
+
+button:hover:not(:disabled) {
+  background: #262c36;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+input[type="text"], input[type="password"] {
+  font-family: var(--font-mono);
+  font-size: 1em;
+  font-weight: 600;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.6em 0.8em;
+}
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.2em;
+}
+
+/* Status pills used in both views */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.25em 0.75em;
+  border-radius: 999px;
+  font-size: 0.85em;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pill::before {
+  content: "";
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.pill-connected {
+  background: var(--bg-raised-2);
+  color: var(--green);
+}
+
+.pill-disconnected {
+  background: var(--bg-raised-2);
+  color: var(--text-faint);
+}
+
+.pill-onair {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+/* Connection-lost overlay, shared by both views */
+#conn-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 6, 8, 0.72);
+  backdrop-filter: grayscale(1) blur(1px);
+  text-align: center;
+  padding: 2em;
+}
+
+#conn-overlay.visible {
+  display: flex;
+}
+
+#conn-overlay .box {
+  background: var(--red-bg);
+  border: 2px solid var(--red);
+  border-radius: var(--radius);
+  padding: 1.5em 2em;
+  font-size: 1.4em;
+  font-weight: 700;
+  color: #ffdada;
+}
+
+body.conn-lost > #app {
+  filter: grayscale(1) brightness(0.5);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Warning banner (admin) */
+.warning-banner {
+  background: var(--amber-bg);
+  border: 2px solid var(--amber);
+  color: #ffe3b0;
+  border-radius: var(--radius);
+  padding: 0.9em 1.2em;
+  font-weight: 700;
+  font-size: 1.05em;
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+}
+
+.warning-banner .icon {
+  font-size: 1.3em;
+}
+
+/* Generic error/empty state */
+.error-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  text-align: center;
+  padding: 2em;
+}
+
+.error-state .box {
+  max-width: 32em;
+}
+
+.error-state h1 {
+  color: var(--red);
+  font-size: 1.8em;
+}
+
+.text-dim {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.text-faint {
+  color: var(--text-faint);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+a {
+  color: var(--blue);
+}

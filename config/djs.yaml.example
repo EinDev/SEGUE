@@ -1,0 +1,9 @@
+djs:
+  - id: dj1
+    name: Kite
+    mount: dj1
+    password: "${DJ1_PASSWORD}"
+  - id: dj2
+    name: Nova
+    mount: dj2
+    password: "${DJ2_PASSWORD}"

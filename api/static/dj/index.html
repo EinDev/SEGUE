@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>SEGUE — DJ</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+  #app {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 1em 1em 3em 1em;
+    display: flex;
+    flex-direction: column;
+    gap: 1em;
+  }
+
+  /* --- Tally: roughly half the screen, three unmistakable states --- */
+  #tally {
+    height: 50vh;
+    min-height: 320px;
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4em;
+    text-align: center;
+    border: 4px solid transparent;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+
+  #tally .tally-label {
+    font-size: 3.2em;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+
+  #tally .tally-sub {
+    font-size: 1.3em;
+    font-weight: 600;
+    opacity: 0.85;
+  }
+
+  #tally.state-disconnected {
+    background: var(--grey-bg);
+    color: var(--grey);
+  }
+  #tally.state-disconnected .tally-label { color: #b7bcc6; }
+
+  #tally.state-connected {
+    background: var(--blue-bg);
+    color: var(--blue);
+    border-color: var(--blue);
+  }
+  #tally.state-connected .tally-label { color: #cfe0ff; }
+
+  #tally.state-onair {
+    background: var(--red-bg);
+    color: var(--red);
+    border-color: var(--red);
+    animation: onair-pulse 2s ease-in-out infinite;
+  }
+  #tally.state-onair .tally-label { color: #ffd4d4; }
+
+  @keyframes onair-pulse {
+    0%, 100% { box-shadow: 0 0 0px 0px rgba(239, 68, 68, 0.55); }
+    50% { box-shadow: 0 0 32px 8px rgba(239, 68, 68, 0.55); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #tally.state-onair { animation: none; }
+  }
+
+  /* --- Who's live now --- */
+  #live-now {
+    text-align: center;
+    font-size: 1.3em;
+    font-weight: 600;
+  }
+  #live-now .name {
+    font-weight: 800;
+    color: var(--red);
+  }
+  #live-now .filler {
+    font-weight: 800;
+    color: var(--text-dim);
+  }
+
+  /* --- Other DJs --- */
+  #other-djs ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+  }
+  #other-djs li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-raised-2);
+    border-radius: var(--radius);
+    padding: 0.6em 1em;
+    font-weight: 600;
+  }
+
+  /* --- Credentials --- */
+  .cred-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    padding: 0.55em 0;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .cred-row:last-child { border-bottom: none; }
+  .cred-label {
+    width: 6.5em;
+    flex-shrink: 0;
+    color: var(--text-dim);
+    font-weight: 700;
+  }
+  .cred-value {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .cred-copy-btn {
+    padding: 0.4em 0.9em;
+    font-size: 0.9em;
+    flex-shrink: 0;
+  }
+  .cred-toggle-btn {
+    padding: 0.4em 0.7em;
+    font-size: 0.9em;
+    flex-shrink: 0;
+  }
+  .format-hint {
+    margin-top: 0.6em;
+    color: var(--text-dim);
+    font-size: 0.95em;
+  }
+
+  #conn-quality-empty {
+    color: var(--text-faint);
+    font-style: italic;
+  }
+
+  #app.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div id="app" class="hidden">
+  <div id="tally" class="state-disconnected">
+    <div class="tally-label" id="tally-label">NICHT VERBUNDEN</div>
+    <div class="tally-sub" id="tally-name">—</div>
+  </div>
+
+  <div id="live-now" class="card">Lädt…</div>
+
+  <div class="card" id="other-djs">
+    <h2>Andere DJs</h2>
+    <ul id="other-djs-list"></ul>
+  </div>
+
+  <div class="card" id="credentials">
+    <h2>Deine Zugangsdaten</h2>
+    <div class="cred-row">
+      <div class="cred-label">Host</div>
+      <div class="cred-value" id="cred-host">—</div>
+      <button class="cred-copy-btn" data-copy-target="cred-host">Kopieren</button>
+    </div>
+    <div class="cred-row">
+      <div class="cred-label">Port</div>
+      <div class="cred-value" id="cred-port">—</div>
+      <button class="cred-copy-btn" data-copy-target="cred-port">Kopieren</button>
+    </div>
+    <div class="cred-row">
+      <div class="cred-label">Mount</div>
+      <div class="cred-value" id="cred-mount">—</div>
+      <button class="cred-copy-btn" data-copy-target="cred-mount">Kopieren</button>
+    </div>
+    <div class="cred-row">
+      <div class="cred-label">User</div>
+      <div class="cred-value" id="cred-user">—</div>
+      <button class="cred-copy-btn" data-copy-target="cred-user">Kopieren</button>
+    </div>
+    <div class="cred-row">
+      <div class="cred-label">Passwort</div>
+      <div class="cred-value" id="cred-password">•••••••</div>
+      <button class="cred-toggle-btn" id="cred-password-toggle">Anzeigen</button>
+      <button class="cred-copy-btn" data-copy-target="cred-password" data-copy-raw="password">Kopieren</button>
+    </div>
+    <div class="format-hint" id="cred-format-hint"></div>
+  </div>
+
+  <div class="card" id="conn-quality">
+    <h2>Verbindungsqualität</h2>
+    <div id="conn-quality-empty">nicht verfügbar</div>
+  </div>
+</div>
+
+<div id="error-app" class="error-state hidden">
+  <div class="box">
+    <h1>Ungültiger Link</h1>
+    <p class="text-dim">Dieser DJ-Link ist nicht (mehr) gültig. Bitte beim Betreiber einen neuen Link anfordern.</p>
+  </div>
+</div>
+
+<div id="conn-overlay">
+  <div class="box">Verbindung zum Server verloren</div>
+</div>
+
+<script src="dj.js"></script>
+</body>
+</html>

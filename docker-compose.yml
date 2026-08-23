@@ -1,0 +1,72 @@
+services:
+  liquidsoap:
+    build: ./liquidsoap
+    restart: unless-stopped
+    environment:
+      DJ1_PASSWORD: ${DJ1_PASSWORD}
+      DJ2_PASSWORD: ${DJ2_PASSWORD}
+      ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
+      ONAIR_LIQUIDSOAP_TELNET_PORT: ${ONAIR_LIQUIDSOAP_TELNET_PORT:-1234}
+      ONAIR_HARBOR_PORT: ${ONAIR_HARBOR_PORT:-8005}
+      ONAIR_OUTPUT_PORT: ${ONAIR_OUTPUT_PORT:-8000}
+      ONAIR_WEBHOOK_URL: ${ONAIR_WEBHOOK_URL:-http://api:8080/internal/harbor/event}
+    volumes:
+      - ./config:/config:ro
+      - ./filler:/filler:ro
+      - ./logs:/logs
+    ports:
+      # Harbor ingest and the live output mount must bypass Traefik entirely
+      # (Icecast's SOURCE method breaks behind a reverse proxy) - published
+      # directly to the host, not routed through Coolify's domain/TLS layer.
+      - "8005:8005"
+      - "8000:8000"
+      # NOTE: the telnet control port (1234) is intentionally NOT published
+      # here and NOT listed under `expose:` either. It must stay reachable
+      # only from other containers on this compose network (the `api`
+      # service talks to it as liquidsoap:1234) and never from the host or
+      # the internet.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 1234), timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    depends_on:
+      - liquidsoap
+    environment:
+      # DJ passwords are also needed here (not just by liquidsoap) because
+      # the api expands the same ${VAR} placeholders in config/djs.yaml to
+      # show each DJ their own credentials in the DJ view. Keep this list in
+      # sync with liquidsoap's DJx_PASSWORD vars above and with config/djs.yaml.
+      DJ1_PASSWORD: ${DJ1_PASSWORD}
+      DJ2_PASSWORD: ${DJ2_PASSWORD}
+      ONAIR_ADMIN_TOKEN: ${ONAIR_ADMIN_TOKEN}
+      ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
+      ONAIR_LIQUIDSOAP_HOST: ${ONAIR_LIQUIDSOAP_HOST:-liquidsoap}
+      ONAIR_LIQUIDSOAP_TELNET_PORT: ${ONAIR_LIQUIDSOAP_TELNET_PORT:-1234}
+      ONAIR_HARBOR_PUBLIC_HOST: ${ONAIR_HARBOR_PUBLIC_HOST}
+      ONAIR_HARBOR_PUBLIC_PORT: ${ONAIR_HARBOR_PUBLIC_PORT:-8005}
+      ONAIR_DEBOUNCE_SECONDS: ${ONAIR_DEBOUNCE_SECONDS:-2}
+      ONAIR_DB_PATH: ${ONAIR_DB_PATH:-/data/onair.db}
+    volumes:
+      - ./config:/config:ro
+      # Must be a persistent, named host path (not an anonymous volume that
+      # Coolify could recreate) - this is what keeps DJ tokens/links valid
+      # across a redeploy. See CONCEPT.md section 9/11.5.
+      - ./data:/data
+    expose:
+      - "8080"
+      # No `ports:` mapping on purpose: Coolify attaches a domain (with
+      # automatic TLS) to this service through its own Traefik labels, which
+      # it injects when the operator sets a domain on this service in the
+      # Coolify UI. Publishing 8080 directly here would fight with that.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

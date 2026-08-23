@@ -1,0 +1,23 @@
+# Secrets and per-deployment config - never commit real values
+.env
+config/djs.yaml
+
+# Persistent runtime data (SQLite DB, DJ tokens, event log)
+data/*
+!data/.gitkeep
+
+# Liquidsoap logs
+logs/*
+!logs/.gitkeep
+
+# Filler audio (operator's own music, not project source)
+filler/*
+!filler/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor/OS cruft
+.DS_Store
+Thumbs.db
