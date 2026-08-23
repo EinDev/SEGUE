@@ -54,16 +54,17 @@ manual steps as possible.
    domain won't reach it.
 
 8. **Send DJs their links.** Each DJ gets a unique URL with their own
-   credentials and a live tally view - no login required. Once the api's
-   token CLI is available, retrieve them with:
+   credentials and a live tally view - no login required. Retrieve them with:
 
    ```
    docker compose exec api python -m app.cli tokens
    ```
 
-   (At the time of writing this CLI is still being built; if the command
-   above isn't found yet, check back once the `api` service has shipped, or
-   ask whoever built it for the current invocation.)
+   Set `ONAIR_PUBLIC_BASE_URL` in `.env` to your domain from step 4 (e.g.
+   `https://segue.your-domain.example`) to get full clickable links; without
+   it, the command prints bare `/dj/{token}` paths for you to prepend
+   yourself. Tokens are generated once and persist in `./data` - rerunning
+   this command later reprints the same links, it never rotates them.
 
 ## What can go wrong
 

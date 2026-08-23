@@ -52,6 +52,7 @@ services:
       ONAIR_HARBOR_PUBLIC_PORT: ${ONAIR_HARBOR_PUBLIC_PORT:-8005}
       ONAIR_DEBOUNCE_SECONDS: ${ONAIR_DEBOUNCE_SECONDS:-2}
       ONAIR_DB_PATH: ${ONAIR_DB_PATH:-/data/onair.db}
+      ONAIR_PUBLIC_BASE_URL: ${ONAIR_PUBLIC_BASE_URL:-}
     volumes:
       - ./config:/config:ro
       # Must be a persistent, named host path (not an anonymous volume that
