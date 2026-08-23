@@ -67,7 +67,15 @@ import zipfile
 from pathlib import Path
 from typing import Callable, List
 
-LJ_CONTROLLER_DIR = Path(__file__).resolve().parent.parent.parent / "lj-controller"
+# Baked into the image at build time (api/Dockerfile: COPY lj-controller
+# /srv/lj-controller, with a repo-root build context) - NOT bind-mounted.
+# A bind mount was tried first and broke on Coolify: relative `volumes:`
+# paths get provisioned as independent persistent-storage directories,
+# not synced from the git checkout, so the mount came up empty in
+# production despite working fine in local `docker compose` testing
+# (which does reflect the real host directory). See docker-compose.yaml's
+# `api.build` comment for the full story.
+LJ_CONTROLLER_DIR = Path(__file__).resolve().parent.parent / "lj-controller"
 
 SCENE_NAME = "Live"
 STANDBY_SOURCE = "Standby"

@@ -1,0 +1,18 @@
+# api's build context became the repo root (see docker-compose.yaml's
+# api.build - needed to COPY lj-controller/ into the image). Without this
+# file, `docker build` would upload the whole repo - including .git
+# history and any local runtime data - to the daemon on every build.
+.git
+.gitignore
+data/
+# Docker's .dockerignore matching is NOT recursive by default the way
+# .gitignore's is - a bare `__pycache__/` only matches at the context
+# root, not nested under e.g. lj-controller/ or api/app/. Needs the `**/`
+# prefix to match at any depth (confirmed: without it, a stray local
+# lj-controller/__pycache__/ still got copied into the image).
+**/__pycache__/
+**/*.pyc
+.env
+.env.*
+!.env.example
+lj-controller/config.yaml

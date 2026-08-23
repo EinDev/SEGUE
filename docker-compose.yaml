@@ -45,7 +45,21 @@ services:
       start_period: 10s
 
   api:
-    build: ./api
+    build:
+      # Repo root, not ./api - the image needs to COPY lj-controller/ in
+      # at build time (see api/Dockerfile) so /api/admin/lj/package.zip
+      # and /api/admin/lj/obs-scene.json can serve its real files. A
+      # bind-mount of lj-controller/ was tried first and broke on Coolify:
+      # relative `volumes:` paths get provisioned as independent
+      # persistent-storage directories (same mechanism that broke the
+      # single-file mediamtx.yml bind mount earlier), not synced from the
+      # git checkout - fine for ./data below (meant to start empty and be
+      # self-populated at runtime) but wrong for something that needs the
+      # repo's actual committed file contents. Baking it into the image
+      # sidesteps that entirely, and Coolify already rebuilds this image
+      # fresh on every deploy anyway.
+      context: .
+      dockerfile: api/Dockerfile
     restart: unless-stopped
     depends_on:
       - mediamtx
@@ -73,15 +87,6 @@ services:
       # roster itself now lives entirely in this SQLite DB, self-registered
       # via Authentik login - there is no config/djs.yaml file anymore).
       - ./data:/data
-      # Read-only, directory-to-directory (the single-file bind mount for
-      # mediamtx.yml broke on Coolify earlier - see mediamtx's own volumes
-      # comment - but a *directory* mount is exactly what ./data:/data
-      # above already proves works fine). api's /api/admin/lj/package.zip
-      # and /api/admin/lj/obs-scene.json read these files directly at
-      # request time to build the LJ controller download - the api image
-      # itself never COPYs lj-controller/ in (its build context is scoped
-      # to ./api, which can't reach a repo-root sibling directory anyway).
-      - ./lj-controller:/lj-controller:ro
     expose:
       - "8080"
       # No `ports:` mapping on purpose: Coolify attaches a domain (with
