@@ -18,8 +18,13 @@ services:
       # Harbor ingest and the live output mount must bypass Traefik entirely
       # (Icecast's SOURCE method breaks behind a reverse proxy) - published
       # directly to the host, not routed through Coolify's domain/TLS layer.
-      - "8005:8005"
-      - "8000:8000"
+      # Host-side port is split from the container-internal port (which
+      # stays ONAIR_HARBOR_PORT/ONAIR_OUTPUT_PORT above) so a collision with
+      # something else already bound to 8005/8000 on a shared host can be
+      # fixed by setting ONAIR_HARBOR_HOST_PORT/ONAIR_OUTPUT_HOST_PORT in
+      # .env, without touching this file or the DJ-facing internal port.
+      - "${ONAIR_HARBOR_HOST_PORT:-8005}:${ONAIR_HARBOR_PORT:-8005}"
+      - "${ONAIR_OUTPUT_HOST_PORT:-8000}:${ONAIR_OUTPUT_PORT:-8000}"
       # NOTE: the telnet control port (1234) is intentionally NOT published
       # here and NOT listed under `expose:` either. It must stay reachable
       # only from other containers on this compose network (the `api`

@@ -51,7 +51,8 @@ manual steps as possible.
    OBS pointing at `http://<your-server-ip-or-domain>:8000/live`. Use the
    plain host/IP and port 8000 here, **not** the TLS domain from step 4 -
    this mount bypasses Traefik entirely, so `https://` and the Coolify
-   domain won't reach it.
+   domain won't reach it. If you had to remap `ONAIR_OUTPUT_HOST_PORT` (see
+   "What can go wrong" below), use that port instead of 8000.
 
 8. **Send DJs their links.** Each DJ gets a unique URL with their own
    credentials and a live tally view - no login required. Retrieve them with:
@@ -68,8 +69,20 @@ manual steps as possible.
 
 ## What can go wrong
 
-Pulled from the project's error/robustness table - these two are the most
+Pulled from the project's error/robustness table - these are the most
 likely operator mistakes on Coolify specifically:
+
+- **Deploy fails with `port is already allocated` (usually 8000).** Ports
+  8000/8005 are published directly to the Coolify server's host network
+  (see the firewall step above), so they collide with anything else on that
+  server already bound to the same port - common on a shared host, since
+  8000 in particular is a very popular default for other apps. Fix: in the
+  resource's env vars, set `ONAIR_HARBOR_HOST_PORT` and/or
+  `ONAIR_OUTPUT_HOST_PORT` (see `.env.example`) to free ports instead, then
+  redeploy - no compose file edit needed. If you remap
+  `ONAIR_OUTPUT_HOST_PORT`, update the OBS URL in step 7 to match; if you
+  remap `ONAIR_HARBOR_HOST_PORT`, update `ONAIR_HARBOR_PUBLIC_PORT` to match
+  too, since that's what gets shown to DJs.
 
 - **DJ encoders can't connect / connect then immediately drop.** This
   usually means ports 8005 (or 8000) ended up routed through Coolify's
