@@ -289,7 +289,12 @@ konstruiert diese URL nie selbst.
 
 ```
 POST   /internal/mediamtx/event  → Header X-Onair-Secret, sonst 403
-POST   /internal/mediamtx/auth   → Header X-Onair-Secret, sonst 403
+POST   /internal/mediamtx/auth   → Query-Param ?secret=..., sonst 403
+                                    (MediaMTX kann bei diesem Aufruf keinen
+                                    eigenen Header setzen - der Secret muss
+                                    deshalb Teil der in MTX_AUTHHTTPADDRESS
+                                    konfigurierten URL sein, siehe
+                                    docker-compose.yaml)
                                     Body: {user, password, action, path, ip, ...}
                                     200 = erlaubt, 403 = abgelehnt
 ```

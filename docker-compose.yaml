@@ -4,6 +4,16 @@ services:
     restart: unless-stopped
     environment:
       ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
+      # Overrides mediamtx.yml's authHTTPAddress via MediaMTX's own
+      # MTX_<KEY> config-override mechanism, injecting the shared secret
+      # as a query param. Confirmed necessary and confirmed working
+      # end-to-end (real RTMP publish against the pinned image) - MediaMTX
+      # makes this HTTP call itself and has no way to attach a custom
+      # header to it, unlike the runOnAvailable/runOnUnavailable hooks
+      # below api's /internal/mediamtx/event, which we invoke ourselves
+      # via curl and can header however we like. See api/app/main.py's
+      # /internal/mediamtx/auth for the matching query-param check.
+      MTX_AUTHHTTPADDRESS: "http://api:8080/internal/mediamtx/auth?secret=${ONAIR_INTERNAL_SECRET}"
     # No volume mount for mediamtx.yml on purpose: mediamtx/Dockerfile
     # already COPYs it into the image at build time, and Coolify rebuilds
     # the image fresh on every deploy anyway. A relative-path single-file

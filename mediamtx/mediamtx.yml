@@ -72,6 +72,15 @@ apiAddress: :9997
 # - `authHTTPExclude: [api]` fails to parse (confirmed against the pinned
 # image locally: "json: cannot unmarshal string into Go value of type
 # map[string]json.RawMessage").
+# The real authHTTPAddress (with ?secret=... appended) is injected via the
+# MTX_AUTHHTTPADDRESS environment variable in docker-compose.yaml, not
+# written here - this file is committed to git and MediaMTX's config has
+# no shell/env expansion inside plain string values (unlike the
+# runOnAvailable/runOnUnavailable commands above, which really do run
+# through `sh -c` and see $ONAIR_INTERNAL_SECRET). The value below is only
+# a fallback for running this file standalone without that override; it
+# has no query param, so it will correctly fail every auth check until
+# overridden.
 authMethod: http
 authHTTPAddress: http://api:8080/internal/mediamtx/auth
 authHTTPExclude:

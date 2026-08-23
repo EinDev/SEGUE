@@ -506,8 +506,8 @@ def _log_event_debounced(key: str, message: str, cooldown: float = 30.0) -> None
 
 @app.post("/internal/mediamtx/event")
 async def mediamtx_event(request: Request) -> dict:
-    secret = request.headers.get("X-Onair-Secret")
-    if secret != app.state.internal_secret:
+    secret = request.headers.get("X-Onair-Secret", "")
+    if not secrets.compare_digest(secret, app.state.internal_secret):
         _log_event_debounced(
             "secret-mismatch-event",
             "Interner Aufruf mit falschem/fehlendem Secret abgelehnt (mediamtx/event) - "
@@ -536,8 +536,15 @@ async def mediamtx_event(request: Request) -> dict:
 
 @app.post("/internal/mediamtx/auth")
 async def mediamtx_auth(request: Request) -> Response:
-    secret = request.headers.get("X-Onair-Secret")
-    if secret != app.state.internal_secret:
+    # Unlike /internal/mediamtx/event (fired by our own runOnAvailable/
+    # runOnUnavailable curl commands, where we control every header),
+    # MediaMTX's built-in HTTP client makes *this* call itself and has no
+    # config option to attach a custom header to it - confirmed against
+    # the config reference. So the secret has to travel as a query param
+    # baked into the configured authHTTPAddress URL instead (see
+    # docker-compose.yaml's MTX_AUTHHTTPADDRESS override).
+    secret = request.query_params.get("secret", "")
+    if not secrets.compare_digest(secret, app.state.internal_secret):
         _log_event_debounced(
             "secret-mismatch-auth",
             "Interner Aufruf mit falschem/fehlendem Secret abgelehnt (mediamtx/auth) - "
