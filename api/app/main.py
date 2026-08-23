@@ -128,6 +128,7 @@ async def on_startup() -> None:
     app.state.auth_header = os.environ.get("ONAIR_AUTH_USERNAME_HEADER", "X-authentik-username")
     app.state.internal_secret = _env("ONAIR_INTERNAL_SECRET")
     app.state.max_djs = int(os.environ.get("ONAIR_MAX_DJS", "6"))
+    app.state.log_debounce = {}
     harbor_host = _env("ONAIR_HARBOR_PUBLIC_HOST", "")
     harbor_port = int(os.environ.get("ONAIR_HARBOR_PUBLIC_PORT", "8005"))
     debounce_seconds = float(os.environ.get("ONAIR_DEBOUNCE_SECONDS", "2"))
@@ -387,10 +388,28 @@ async def ws_dj(websocket: WebSocket) -> None:
 # routed through the public domain / Authentik proxy)
 # ---------------------------------------------------------------------------
 
+def _log_event_debounced(key: str, message: str, cooldown: float = 30.0) -> None:
+    """Log an eventlog entry, but at most once per `key` per `cooldown`
+    seconds. A rejected connection (wrong password, mismatched internal
+    secret) can retry every few seconds indefinitely from a misconfigured
+    or stubborn encoder -- without this, that alone would drown out every
+    other entry in the admin's event log."""
+    now = asyncio.get_running_loop().time()
+    last = app.state.log_debounce.get(key, 0.0)
+    if now - last >= cooldown:
+        app.state.log_debounce[key] = now
+        app.state.db.log_event(message)
+
+
 @app.post("/internal/harbor/event")
 async def harbor_event(request: Request) -> dict:
     secret = request.headers.get("X-Onair-Secret")
     if secret != app.state.internal_secret:
+        _log_event_debounced(
+            "secret-mismatch-event",
+            "Interner Aufruf mit falschem/fehlendem Secret abgelehnt (harbor/event) - "
+            "ONAIR_INTERNAL_SECRET zwischen liquidsoap und api prüfen.",
+        )
         raise HTTPException(status_code=403, detail="forbidden")
     body = await request.json()
     username = body.get("user")
@@ -410,6 +429,11 @@ async def harbor_event(request: Request) -> dict:
 async def harbor_auth(request: Request, user: str = "", password: str = "", address: str = "") -> str:
     secret = request.headers.get("X-Onair-Secret")
     if secret != app.state.internal_secret:
+        _log_event_debounced(
+            "secret-mismatch-auth",
+            "Interner Aufruf mit falschem/fehlendem Secret abgelehnt (harbor/auth) - "
+            "ONAIR_INTERNAL_SECRET zwischen liquidsoap und api prüfen.",
+        )
         raise HTTPException(status_code=403, detail="forbidden")
     ok = app.state.db.check_credentials(user, password)
     if not ok:
@@ -418,7 +442,10 @@ async def harbor_auth(request: Request, user: str = "", password: str = "", addr
         reason = "unbekannter Benutzer" if not app.state.db.dj_exists(user) else (
             "nicht freigeschaltet" if not app.state.db.is_ready(user) else "falsches Passwort"
         )
-        app.state.db.log_event(f"Harbor-Login fehlgeschlagen: {user!r} von {address} ({reason})")
+        _log_event_debounced(
+            f"auth-fail-{user}-{address}",
+            f"Harbor-Login fehlgeschlagen: {user!r} von {address} ({reason})",
+        )
     return "true" if ok else "false"
 
 
