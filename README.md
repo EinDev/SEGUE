@@ -63,15 +63,42 @@ Liquidsoap restart, so do it before doors open, not mid-event).
 
 3. **Set a domain on the `api` service only, with Authentik forward-auth
    attached.** In Coolify's UI, attach your domain (Coolify issues TLS
-   automatically) to the `api` service, then attach your Authentik
-   forward-auth middleware to that same domain/route (a Traefik
-   `forwardAuth` middleware pointing at your Authentik outpost - consult
-   your Authentik/Coolify setup for the exact click-path, it varies by
-   version). Confirm it's configured to inject the authenticated username
+   automatically) to the `api` service. Leave `liquidsoap` without a domain
+   - it doesn't need one; its two ports are published directly instead.
+
+   Then wire up the Authentik middleware. This is a two-part setup because
+   Coolify's Docker Compose resources don't expose a per-service "Network /
+   Container Labels" editor the way single-Dockerfile app resources do -
+   the middleware itself is defined once at the server level, and
+   `docker-compose.yaml` (see the `api` service's `labels:`) just references
+   it by name:
+   - **Define the middleware once, server-wide**, not per-app: Coolify UI ->
+     **Servers -> your server -> Proxy -> Configuration**, add a new dynamic
+     config file (e.g. `authentik-auth.yaml`):
+     ```yaml
+     http:
+       middlewares:
+         authentik-auth:
+           forwardAuth:
+             address: 'http://<authentik-server-host>:9000/outpost.goauthentik.io/auth/traefik'
+             trustForwardHeader: true
+             authResponseHeaders:
+               - X-authentik-username
+               - X-authentik-groups
+               - X-authentik-email
+               - X-authentik-name
+               - X-authentik-uid
+     ```
+   - **Attach it to the `api` service** - already done in this repo's
+     `docker-compose.yaml` via the `coolify.traefik.middlewares=
+     authentik-auth@file` label, which Coolify consumes at deploy time and
+     injects into whatever router it auto-generates for the domain (no need
+     to know/hardcode that router's Coolify-assigned name).
+
+   Confirm the outpost is configured to inject the authenticated username
    into the `X-authentik-username` header (Authentik's own default) - or
    change `ONAIR_AUTH_USERNAME_HEADER` in `.env` to match whatever header
-   your setup actually uses. Leave `liquidsoap` without a domain - it
-   doesn't need one; its two ports are published directly instead.
+   your setup actually uses.
 
 4. **Deploy.**
 

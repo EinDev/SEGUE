@@ -70,6 +70,13 @@ services:
       # middleware attached to it (see README) - this app has no login form
       # of its own and trusts the ONAIR_AUTH_USERNAME_HEADER header
       # completely, assuming only the proxy can set it.
+    labels:
+      # Injects into whatever router Coolify auto-generates for this
+      # service's domain, without us having to know/hardcode its
+      # Coolify-assigned router name. Requires an `authentik-auth`
+      # middleware defined in Coolify's Traefik dynamic config first
+      # (Servers > Proxy > Configuration) - see README.
+      - "coolify.traefik.middlewares=authentik-auth@file"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"]
       interval: 10s
