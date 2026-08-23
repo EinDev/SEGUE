@@ -248,6 +248,7 @@
       djDetailField("resolution", "Auflösung") +
       djDetailField("codec", "Codec") +
       djDetailField("bitrate", "Bitrate") +
+      djDetailField("delay", "Verzögerung DJ→Server") +
       djDetailField("since", "Verbunden") +
       djDetailField("remote", "Adresse") +
       djDetailField("agent", "Encoder") +
@@ -320,6 +321,7 @@
       set("resolution", "—");
       set("codec", "—");
       set("bitrate", "—");
+      set("delay", "—");
       set("since", "—");
       set("remote", "—");
       set("agent", "—");
@@ -328,6 +330,11 @@
     set("resolution", data.resolution || "unbekannt");
     set("codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || "unbekannt");
     set("bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : "wird berechnet…");
+    // Same figure as the DJ's own "Verbindungsqualität" card - this is
+    // DJ-encoder-to-relay delay only, not end-to-end to VRCDN (see
+    // mediamtx_stats.py's module docstring for why that isn't measurable
+    // from here).
+    set("delay", data.delay_seconds != null ? `${data.delay_seconds.toFixed(1)} s` : "unbekannt");
     set("since", data.connected_since ? formatSince(data.connected_since) : "unbekannt");
     set("remote", data.remote_addr || "unbekannt");
     set("agent", data.user_agent || "unbekannt");
@@ -364,7 +371,12 @@
     const src = `/api/admin/preview/${encodeURIComponent(roster.slot)}/index.m3u8`;
 
     if (window.Hls && window.Hls.isSupported()) {
-      const hls = new window.Hls();
+      // mediamtx's default hlsVariant is "lowLatency" (LL-HLS, 200ms
+      // parts) - without this flag hls.js ignores that and falls back to
+      // whole-segment buffering (~3 segments deep by convention, ~3s at
+      // the default 1s segment duration). This is preview-only; it has
+      // no bearing on the actual on-air switching path (RTSP/OBS).
+      const hls = new window.Hls({ lowLatencyMode: true });
       hls.loadSource(src);
       hls.attachMedia(video);
       video.play().catch(() => {});

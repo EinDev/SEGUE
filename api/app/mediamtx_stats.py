@@ -16,9 +16,14 @@ What IS computed and shown:
 
   - "Verzoegerung DJ -> Server" (get_hls_delay_seconds): how far behind
     the live edge the relay's own HLS output currently is, derived by
-    diffing the latest #EXT-X-PROGRAM-DATE-TIME tag in the slot's HLS
-    variant playlist against wall-clock now. This covers only the
-    DJ-encoder-to-MediaMTX leg (plus MediaMTX's own HLS segmenting
+    diffing wall-clock now against the *live edge estimate* of the slot's
+    HLS variant playlist (see _latest_edge -- the last
+    #EXT-X-PROGRAM-DATE-TIME tag plus the summed duration of the
+    #EXT-X-PART entries after it, not just the segment-boundary
+    timestamp alone; mediamtx's default hlsVariant is "lowLatency", which
+    already emits ~200ms parts, so using them gets sub-second precision
+    instead of being bound by the ~1s segment duration). This covers only
+    the DJ-encoder-to-MediaMTX leg (plus MediaMTX's own HLS segmenting
     latency) -- it says nothing about the LJ's OBS encode or the push to
     VRCDN, both of which add more delay this server cannot see.
 
@@ -31,7 +36,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -39,7 +44,7 @@ import httpx
 logger = logging.getLogger("segue.mediamtx_stats")
 
 _VIDEO_CODECS = {"H264", "H265", "AV1", "VP8", "VP9"}
-_PROGRAM_DATE_TIME_RE = re.compile(r"#EXT-X-PROGRAM-DATE-TIME:(\S+)")
+_PART_DURATION_RE = re.compile(r"DURATION=([0-9.]+)")
 
 
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
@@ -122,6 +127,38 @@ async def get_ingest_stats(
     }
 
 
+def _latest_edge(variant_playlist_text: str) -> Optional[datetime]:
+    """Estimate the live edge timestamp at sub-second precision.
+
+    #EXT-X-PROGRAM-DATE-TIME only appears once per full segment (default
+    1s, see hlsSegmentDuration), which is too coarse on its own - but
+    mediamtx's default hlsVariant ("lowLatency") also emits #EXT-X-PART
+    entries (default 200ms each) advancing the timeline within that
+    segment. Sum the part durations that appear after the last PDT tag
+    and add that to it, rather than using the segment-boundary timestamp
+    alone. #EXT-X-PRELOAD-HINT (a part mediamtx is still producing, not
+    yet fetchable) is deliberately excluded - it isn't "there" yet.
+    """
+    last_pdt: Optional[datetime] = None
+    offset = 0.0
+    for line in variant_playlist_text.splitlines():
+        line = line.strip()
+        if line.startswith("#EXT-X-PROGRAM-DATE-TIME:"):
+            parsed = _parse_iso(line.split(":", 1)[1])
+            if parsed is not None:
+                last_pdt = parsed
+                offset = 0.0
+        elif line.startswith("#EXT-X-PART:") and last_pdt is not None:
+            m = _PART_DURATION_RE.search(line)
+            if m:
+                offset += float(m.group(1))
+        elif line.startswith("#EXT-X-PRELOAD-HINT:"):
+            break  # not-yet-available part: stop, don't count it
+    if last_pdt is None:
+        return None
+    return last_pdt + timedelta(seconds=offset)
+
+
 def _first_variant_uri(master_playlist_text: str) -> Optional[str]:
     """Pull the first #EXT-X-STREAM-INF variant's URI out of an HLS master
     playlist -- the line immediately following #EXT-X-STREAM-INF, skipping
@@ -179,13 +216,10 @@ async def get_hls_delay_seconds(
         if variant_resp.status_code != 200:
             return None
 
-        matches = _PROGRAM_DATE_TIME_RE.findall(variant_resp.text)
-        if not matches:
+        edge = _latest_edge(variant_resp.text)
+        if edge is None:
             return None
-        latest = _parse_iso(matches[-1])
-        if latest is None:
-            return None
-        return max(0.0, (datetime.now(timezone.utc) - latest).total_seconds())
+        return max(0.0, (datetime.now(timezone.utc) - edge).total_seconds())
     except httpx.HTTPError as exc:
         logger.debug("get_hls_delay_seconds failed for %s: %s", slot, exc)
         return None

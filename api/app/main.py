@@ -328,7 +328,19 @@ async def admin_stream_stats(username: str, request: Request) -> dict:
     if dj is None or not dj["ready"] or not dj["slot"]:
         return {"connected": False}
     stats = await mediamtx_stats.get_ingest_stats(app.state.stats_client, app.state.mediamtx_base_url, dj["slot"])
-    return stats or {"connected": False}
+    if stats is None:
+        return {"connected": False}
+    # Same "Verzoegerung DJ -> Server" figure shown on the DJ's own
+    # dashboard - the admin needs this per-DJ to judge stream health
+    # before switching, not just the DJ themself.
+    stats["delay_seconds"] = await mediamtx_stats.get_hls_delay_seconds(
+        app.state.stats_client,
+        app.state.mediamtx_hls_base_url,
+        dj["slot"],
+        app.state.lj_read_username,
+        app.state.lj_read_password,
+    )
+    return stats
 
 
 _SLOT_RE = re.compile(r"^slot[0-9]+$")
