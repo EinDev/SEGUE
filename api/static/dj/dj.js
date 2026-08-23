@@ -211,12 +211,12 @@
     }, 1000);
   }
 
-  document.getElementById("cred-password-toggle").addEventListener("click", () => {
-    passwordRevealed = !passwordRevealed;
-    document.getElementById("cred-password-toggle").textContent = passwordRevealed
+  document.getElementById("cred-stream-key-toggle").addEventListener("click", () => {
+    streamKeyRevealed = !streamKeyRevealed;
+    document.getElementById("cred-stream-key-toggle").textContent = streamKeyRevealed
       ? "Verbergen"
       : "Anzeigen";
-    renderPasswordField();
+    renderStreamKeyField();
   });
 
   // ---- Fetch / polling / WS plumbing ----
