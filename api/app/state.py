@@ -15,7 +15,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Awaitable, Callable, Dict, List, Optional, Set
+from typing import Awaitable, Callable, Dict, Optional, Set
 
 FILLER = "FILLER"
 
@@ -62,20 +62,19 @@ def compute_reason(
     on_air: str,
     pinned: Optional[str],
     connected: Set[str],
-    dj_names: Dict[str, str],
 ) -> str:
-    """Human-readable German sentence per CONCEPT.md §6.4."""
+    """Human-readable German sentence per CONCEPT.md §6.4.
 
-    def name(dj_id: str) -> str:
-        return dj_names.get(dj_id, dj_id)
-
+    Usernames double as their own display name (no separate "name" field
+    since identities now come from Authentik, not a hand-authored roster).
+    """
     if mode == "MANUAL":
         if pinned is None:
             if on_air == FILLER:
                 return "Manuell: kein Pin gesetzt, Filler läuft"
-            return f"Manuell auf {name(on_air)}"
+            return f"Manuell auf {on_air}"
         if on_air == pinned:
-            return f"Manuell gepinnt auf {name(pinned)}"
+            return f"Manuell gepinnt auf {pinned}"
         return "Gepinnter DJ offline, Filler läuft"
 
     # AUTO
@@ -84,8 +83,8 @@ def compute_reason(
             return "Auto: niemand verbunden, Filler läuft"
         return "Auto: mehrere verbunden, keine eindeutige Auswahl, Filler läuft"
     if len(connected) == 1:
-        return f"Auto: nur {name(on_air)} verbunden"
-    return f"Auto: {name(on_air)} on air"
+        return f"Auto: nur {on_air} verbunden"
+    return f"Auto: {on_air} on air"
 
 
 def iso_z(dt: datetime) -> str:
@@ -100,7 +99,7 @@ LogFn = Callable[[str], None]
 
 @dataclass
 class StateManager:
-    djs: List  # List[DjConfig] from app.config
+    db: object  # app.db.Database -- duck-typed here to avoid a circular import
     debounce_seconds: float
     telnet_set_target: TelnetSetTarget
     on_broadcast: BroadcastCb
@@ -116,10 +115,6 @@ class StateManager:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _debounce_task: Optional[asyncio.Task] = None
 
-    def __post_init__(self) -> None:
-        self._dj_ids = {dj.id for dj in self.djs}
-        self._dj_names = {dj.id: dj.name for dj in self.djs}
-
     # -- helpers -----------------------------------------------------
 
     def _resolve_warning(self) -> Optional[str]:
@@ -130,16 +125,15 @@ class StateManager:
 
     def get_full_state(self) -> dict:
         connected = set(self.connected_since)
-        reason = compute_reason(self.mode, self.on_air, self.pinned, connected, self._dj_names)
+        reason = compute_reason(self.mode, self.on_air, self.pinned, connected)
         warning = self._resolve_warning()
         djs = [
             {
-                "id": dj.id,
-                "name": dj.name,
-                "connected": dj.id in connected,
-                "since": iso_z(self.connected_since[dj.id]) if dj.id in connected else None,
+                "username": u,
+                "connected": u in connected,
+                "since": iso_z(self.connected_since[u]) if u in connected else None,
             }
-            for dj in self.djs
+            for u in self.db.list_ready_usernames()
         ]
         return {
             "mode": self.mode,
@@ -151,20 +145,22 @@ class StateManager:
             "server_time": iso_z(datetime.now(timezone.utc)),
         }
 
-    def get_dj_state(self, dj_id: str) -> Optional[dict]:
-        if dj_id not in self._dj_ids:
+    def get_dj_state(self, username: str) -> Optional[dict]:
+        dj = self.db.get_dj(username)
+        if dj is None:
             return None
         connected = set(self.connected_since)
-        reason = compute_reason(self.mode, self.on_air, self.pinned, connected, self._dj_names)
-        dj = next(d for d in self.djs if d.id == dj_id)
-        djs = [{"id": d.id, "name": d.name, "connected": d.id in connected} for d in self.djs]
+        reason = compute_reason(self.mode, self.on_air, self.pinned, connected)
+        djs = [
+            {"username": u, "connected": u in connected} for u in self.db.list_ready_usernames()
+        ]
         return {
             "dj": {
-                "id": dj.id,
-                "name": dj.name,
-                "connected": dj.id in connected,
-                "since": iso_z(self.connected_since[dj.id]) if dj.id in connected else None,
-                "on_air": self.on_air == dj.id,
+                "username": username,
+                "ready": bool(dj["ready"]),
+                "connected": username in connected,
+                "since": iso_z(self.connected_since[username]) if username in connected else None,
+                "on_air": self.on_air == username,
             },
             "mode": self.mode,
             "on_air": self.on_air,
@@ -180,16 +176,18 @@ class StateManager:
         self.mode = mode
         self.pinned = pinned
 
-    async def startup_sync(self, ready_map: Dict[str, bool], remote_target: str) -> None:
+    async def startup_sync(self, connected: Set[str], remote_target: str) -> None:
         """One-shot immediate sync on process startup (no debounce).
 
-        Seeds ``connected`` from Liquidsoap's status, resolves once using
-        Liquidsoap's current target as the baseline on_air, and pushes the
-        result via onair.set if it differs.
+        Seeds ``connected`` from Liquidsoap's status (already translated
+        from slot ids to usernames by the caller), resolves once using
+        Liquidsoap's current target (also already translated to a username
+        or FILLER) as the baseline on_air, and pushes the result via
+        onair.set if it differs.
         """
         async with self._lock:
             now = datetime.now(timezone.utc)
-            self.connected_since = {dj_id: now for dj_id, ready in ready_map.items() if ready}
+            self.connected_since = {u: now for u in connected}
             self.on_air = remote_target if remote_target else FILLER
             new_on_air, _ = resolve(self.mode, self.pinned, set(self.connected_since), self.on_air)
             self.on_air = new_on_air
@@ -213,36 +211,45 @@ class StateManager:
 
     # -- reconciliation (safety net for missed webhooks) ---------------
 
-    async def reconcile(self, ready_map: Dict[str, bool]) -> None:
+    async def reconcile(self, connected: Set[str]) -> None:
         """Treat any discrepancy vs in-memory `connected` like a fresh
-        connect/disconnect event, through the same debounced pipeline."""
+        connect/disconnect event, through the same debounced pipeline.
+
+        `connected` is the full set of usernames Liquidsoap currently
+        reports as live on some slot (already translated by the caller).
+        """
         mismatches = []
         async with self._lock:
-            for dj_id, ready in ready_map.items():
-                if dj_id not in self._dj_ids:
-                    continue
-                local = dj_id in self.connected_since
-                if ready != local:
-                    mismatches.append((dj_id, ready))
-        for dj_id, ready in mismatches:
+            all_known = connected | set(self.connected_since)
+            for username in all_known:
+                remote = username in connected
+                local = username in self.connected_since
+                if remote != local:
+                    mismatches.append((username, remote))
+        for username, remote in mismatches:
             self.log_event(
-                f"Reconciliation: {dj_id} {'verbunden' if ready else 'getrennt'} "
+                f"Reconciliation: {username} {'verbunden' if remote else 'getrennt'} "
                 "(Status-Poll, evtl. verpasster Webhook)"
             )
-            await self._apply_connected_change(dj_id, ready)
+            await self._apply_connected_change(username, remote)
 
     # -- webhook-driven events ------------------------------------------
 
-    async def handle_webhook_event(self, dj_id: str, event: str, received_at: datetime) -> None:
-        if dj_id not in self._dj_ids:
-            self.log_event(f"Unbekannte dj_id im Webhook ignoriert: {dj_id!r}")
+    async def handle_webhook_event(self, username: str, event: str, received_at: datetime) -> None:
+        if not username:
+            self.log_event("Webhook ohne Benutzername ignoriert (Slot war nicht zugeordnet)")
+            return
+        if not self.db.dj_exists(username):
+            # Shouldn't normally happen -- Liquidsoap's auth callback already
+            # required a ready DB row to accept the connection in the first
+            # place. Defensive only (e.g. a DJ row deleted mid-connection).
+            self.log_event(f"Unbekannter Benutzer im Webhook ignoriert: {username!r}")
             return
         if event not in ("connect", "disconnect"):
             self.log_event(f"Unbekanntes Event im Webhook ignoriert: {event!r}")
             return
-        name = self._dj_names.get(dj_id, dj_id)
-        self.log_event(f"{name} {'verbunden' if event == 'connect' else 'getrennt'}")
-        await self._apply_connected_change(dj_id, event == "connect", at=received_at)
+        self.log_event(f"{username} {'verbunden' if event == 'connect' else 'getrennt'}")
+        await self._apply_connected_change(username, event == "connect", at=received_at)
 
     async def _apply_connected_change(
         self, dj_id: str, connected: bool, at: Optional[datetime] = None
@@ -305,7 +312,7 @@ class StateManager:
         async with self._lock:
             old_mode = self.mode
             if new_mode == "MANUAL":
-                if self.pinned is None and self.on_air != FILLER and self.on_air in self._dj_ids:
+                if self.pinned is None and self.on_air != FILLER and self.db.is_ready(self.on_air):
                     self.pinned = self.on_air
             elif new_mode == "AUTO":
                 self.pinned = None
@@ -316,14 +323,14 @@ class StateManager:
             self._cancel_pending_resolve()
             await self._resolve_and_apply_locked()
 
-    async def set_pin(self, dj_id: str) -> None:
-        if dj_id not in self._dj_ids:
-            raise ValueError(f"unknown dj_id: {dj_id!r}")
+    async def set_pin(self, username: str) -> None:
+        if not self.db.is_ready(username):
+            raise ValueError(f"{username} is not a ready/enabled DJ")
         async with self._lock:
             self.mode = "MANUAL"
-            self.pinned = dj_id
+            self.pinned = username
             self.save_settings(self.mode, self.pinned)
-            self.log_event(f"Pin gesetzt auf {self._dj_names.get(dj_id, dj_id)}")
+            self.log_event(f"Pin gesetzt auf {username}")
             self._cancel_pending_resolve()
             await self._resolve_and_apply_locked()
 

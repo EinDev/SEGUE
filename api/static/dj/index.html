@@ -151,6 +151,24 @@
   }
 
   #app.hidden { display: none; }
+
+  #pending-app {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2em;
+    text-align: center;
+  }
+  #pending-app.hidden { display: none; }
+  #pending-app .box { max-width: 30em; }
+  #pending-app h1 { font-size: 1.7em; margin-bottom: 0.4em; }
+  #pending-app .username {
+    font-family: var(--font-mono);
+    font-weight: 800;
+    color: var(--blue);
+  }
+  #pending-app p { color: var(--text-dim); margin-top: 0.6em; }
 </style>
 </head>
 <body>
@@ -205,10 +223,21 @@
   </div>
 </div>
 
+<div id="pending-app" class="hidden">
+  <div class="box">
+    <h1>Warte auf Freischaltung</h1>
+    <p>Angemeldet als <span class="username" id="pending-username">—</span>.</p>
+    <p>Ein Admin muss dich erst freischalten, bevor du einspeisen kannst.
+    Diese Seite aktualisiert sich automatisch, sobald das passiert ist.</p>
+  </div>
+</div>
+
 <div id="error-app" class="error-state hidden">
   <div class="box">
-    <h1>Ungültiger Link</h1>
-    <p class="text-dim">Dieser DJ-Link ist nicht (mehr) gültig. Bitte beim Betreiber einen neuen Link anfordern.</p>
+    <h1>Kein Zugriff</h1>
+    <p class="text-dim">Diese Seite muss über den vom Betreiber bereitgestellten Login-Weg
+    aufgerufen werden. Falls du darüber hier bist, ist etwas an der Anmeldung falsch
+    konfiguriert - bitte den Betreiber kontaktieren.</p>
   </div>
 </div>
 

@@ -6,43 +6,18 @@
 <title>SEGUE — Admin</title>
 <link rel="stylesheet" href="../shared.css">
 <style>
-  #login-app {
+  #denied-app {
     min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 2em;
-  }
-  #login-app.hidden { display: none; }
-
-  #login-box {
-    width: 100%;
-    max-width: 26em;
-    display: flex;
-    flex-direction: column;
-    gap: 1em;
-  }
-  #login-box h1 {
-    font-size: 1.6em;
     text-align: center;
   }
-  #login-box input {
-    width: 100%;
-    padding: 0.8em 1em;
-    font-size: 1.1em;
-  }
-  #login-box button {
-    padding: 0.8em 1em;
-    font-size: 1.1em;
-    background: var(--blue);
-  }
-  #login-box button:hover { background: #4c8ffb; }
-  #login-error {
-    color: var(--red);
-    font-weight: 700;
-    text-align: center;
-    min-height: 1.4em;
-  }
+  #denied-app.hidden { display: none; }
+  #denied-app .box { max-width: 30em; }
+  #denied-app h1 { font-size: 1.6em; margin-bottom: 0.5em; }
+  #denied-app p { color: var(--text-dim); }
 
   #app.hidden { display: none; }
 
@@ -172,17 +147,57 @@
     color: var(--text-faint);
     flex-shrink: 0;
   }
+
+  #roster-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+  }
+  .roster-row {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    flex-wrap: wrap;
+    background: var(--bg-raised);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.7em 1.1em;
+  }
+  .roster-row .username {
+    font-weight: 800;
+    min-width: 8em;
+  }
+  .roster-row .slot {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+  .roster-row .spacer { flex: 1; }
+  .ready-toggle {
+    background: var(--bg);
+    border: 2px solid var(--border);
+  }
+  .ready-toggle.on {
+    background: var(--blue);
+    color: #fff;
+    border-color: var(--blue);
+  }
+  .roster-error {
+    color: var(--red);
+    font-weight: 700;
+    font-size: 0.9em;
+    flex-basis: 100%;
+  }
 </style>
 </head>
 <body>
 
-<div id="login-app">
-  <form id="login-box">
-    <h1>SEGUE Admin</h1>
-    <input type="password" id="login-token" placeholder="Admin-Token" autocomplete="current-password" autofocus>
-    <button type="submit">Anmelden</button>
-    <div id="login-error"></div>
-  </form>
+<div id="denied-app" class="hidden">
+  <div class="box">
+    <h1>Kein Zugriff</h1>
+    <p>Diese Ansicht ist nur für den Admin-Account. Falls du das sein solltest, prüfe die
+    Authentik-Anmeldung und <code>ONAIR_ADMIN_USERNAME</code> auf dem Server.</p>
+  </div>
 </div>
 
 <div id="app" class="hidden">
@@ -205,6 +220,15 @@
   <div class="card">
     <h2>DJs</h2>
     <div id="dj-rows"></div>
+  </div>
+
+  <div class="card">
+    <h2>DJ-Verwaltung</h2>
+    <p class="text-faint" style="margin-top: -0.4em; margin-bottom: 0.8em;">
+      Jede Person, die sich einmal über den DJ-Link anmeldet, taucht hier auf.
+      Erst nach Freischaltung ("bereit") kann sie tatsächlich einspeisen.
+    </p>
+    <div id="roster-rows"></div>
   </div>
 
   <div class="card">

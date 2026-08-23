@@ -9,12 +9,44 @@ manual steps as possible.
 ## Prerequisites
 
 - A Coolify instance (self-hosted, v4+) with a server it can deploy to.
+- An **Authentik** instance reachable from that same Coolify/Traefik setup.
+  This app has no login form of its own - every DJ and the admin both
+  authenticate via an Authentik forward-auth middleware attached to the
+  `api` service's Coolify domain (step 4 below). If you don't already run
+  Authentik, set that up first; it's out of scope for this repo.
 - On that server: ports **8000** and **8005** free and allowed through the
   firewall, in addition to whatever Coolify/Traefik already uses (80/443).
   These two ports carry DJ audio directly and must **not** go through
   Coolify's reverse proxy (see "What can go wrong" below).
-- DJs need an encoder that can push to an Icecast-style harbor: Mixxx,
-  VirtualDJ, or BUTT all work out of the box.
+- DJs need an encoder that can push to an Icecast-style harbor with a
+  username *and* password (not just a password): Mixxx, VirtualDJ, or BUTT
+  all support this out of the box.
+
+## How DJ access works (no manual roster file)
+
+There is no `config/djs.yaml` to hand-edit. Instead:
+
+1. A DJ opens `https://<your-domain>/dj`, logs in via Authentik (however
+   your Authentik setup presents that - SSO, a local account, whatever),
+   and lands on their dashboard. Their harbor credentials (a mount slot and
+   a random password) are generated automatically on this first visit and
+   never change afterwards.
+2. Until an admin approves them, their dashboard just shows "waiting for
+   approval" - their encoder credentials aren't shown yet because none are
+   usable yet (Liquidsoap will reject their harbor connection either way).
+3. The admin (the one Authentik username in `ONAIR_ADMIN_USERNAME`) opens
+   `https://<your-domain>/`, finds the DJ in the "DJ-Verwaltung" panel, and
+   flips them to "bereit" (ready). This assigns them one of a fixed pool of
+   `ONAIR_MAX_DJS` harbor slots.
+4. The DJ reloads and now sees their real host/port/mount/password to plug
+   into their encoder.
+
+Approving/revoking a DJ never restarts Liquidsoap or touches the live
+output - that's the whole point of the slot-pool design (see CONCEPT.md if
+you're curious why). If every slot is already taken, approving one more DJ
+fails with a clear error in the admin panel until you free one up (revoke
+someone, or raise `ONAIR_MAX_DJS` and redeploy - the latter needs a
+Liquidsoap restart, so do it before doors open, not mid-event).
 
 ## Setup
 
@@ -22,50 +54,43 @@ manual steps as possible.
    point it at this repository, and let it detect `docker-compose.yaml`.
 
 2. **Configure secrets.** Copy `.env.example` to `.env` and fill in real
-   values - passwords, the shared internal secret, the admin token, and
-   `ONAIR_HARBOR_PUBLIC_HOST` (the server's actual reachable IP or hostname,
-   **not** the Coolify domain - see below for why). In Coolify this usually
-   means pasting these as the resource's environment variables rather than
-   committing a `.env` file; either way, `.env` is already git-ignored.
+   values - the shared internal secret, `ONAIR_ADMIN_USERNAME` (your
+   Authentik username), and `ONAIR_HARBOR_PUBLIC_HOST` (the server's actual
+   reachable IP or hostname, **not** the Coolify domain - see below for
+   why). In Coolify this usually means pasting these as the resource's
+   environment variables rather than committing a `.env` file; either way,
+   `.env` is already git-ignored.
 
-3. **List your DJs.** Copy `config/djs.yaml.example` to `config/djs.yaml` and
-   add one entry per DJ (`id`, `name`, `mount`, and a `password` - either a
-   literal string or `${DJ1_PASSWORD}`-style reference to a variable from
-   step 2). Add a matching `DJx_PASSWORD` line to `.env` for each DJ you add
-   beyond the two examples.
+3. **Set a domain on the `api` service only, with Authentik forward-auth
+   attached.** In Coolify's UI, attach your domain (Coolify issues TLS
+   automatically) to the `api` service, then attach your Authentik
+   forward-auth middleware to that same domain/route (a Traefik
+   `forwardAuth` middleware pointing at your Authentik outpost - consult
+   your Authentik/Coolify setup for the exact click-path, it varies by
+   version). Confirm it's configured to inject the authenticated username
+   into the `X-authentik-username` header (Authentik's own default) - or
+   change `ONAIR_AUTH_USERNAME_HEADER` in `.env` to match whatever header
+   your setup actually uses. Leave `liquidsoap` without a domain - it
+   doesn't need one; its two ports are published directly instead.
 
-4. **Set a domain on the `api` service only.** In Coolify's UI, attach your
-   domain (Coolify issues TLS automatically) to the `api` service. Leave
-   `liquidsoap` without a domain - it doesn't need one; its two ports are
-   published directly instead.
+4. **Deploy.**
 
-5. **Deploy.**
-
-6. **Open the firewall for ports 8000 and 8005.** These bypass Coolify's
+5. **Open the firewall for ports 8000 and 8005.** These bypass Coolify's
    proxy on purpose, so they need to be reachable directly, both in your
    server's firewall and in Coolify's proxy/port settings if it manages one
    (confirm the exact toggle in your Coolify version's UI - this varies
    slightly between versions).
 
-7. **Point OBS at the output mount.** Add a VLC source (or Media Source) in
+6. **Point OBS at the output mount.** Add a VLC source (or Media Source) in
    OBS pointing at `http://<your-server-ip-or-domain>:8000/live`. Use the
-   plain host/IP and port 8000 here, **not** the TLS domain from step 4 -
+   plain host/IP and port 8000 here, **not** the TLS domain from step 3 -
    this mount bypasses Traefik entirely, so `https://` and the Coolify
    domain won't reach it. If you had to remap `ONAIR_OUTPUT_HOST_PORT` (see
    "What can go wrong" below), use that port instead of 8000.
 
-8. **Send DJs their links.** Each DJ gets a unique URL with their own
-   credentials and a live tally view - no login required. Retrieve them with:
-
-   ```
-   docker compose exec api python -m app.cli tokens
-   ```
-
-   Set `ONAIR_PUBLIC_BASE_URL` in `.env` to your domain from step 4 (e.g.
-   `https://segue.your-domain.example`) to get full clickable links; without
-   it, the command prints bare `/dj/{token}` paths for you to prepend
-   yourself. Tokens are generated once and persist in `./data` - rerunning
-   this command later reprints the same links, it never rotates them.
+7. **Send DJs the one link.** Everyone uses the same URL:
+   `https://<your-domain>/dj`. There's nothing to distribute per-DJ - see
+   "How DJ access works" above.
 
 ## What can go wrong
 
@@ -91,13 +116,27 @@ likely operator mistakes on Coolify specifically:
   sure no domain/proxy rule is attached to `liquidsoap` in Coolify, and that
   8000/8005 are reachable directly against the server's IP.
 
-- **DJ links stop working after a redeploy.** DJ tokens live in SQLite under
-  `./data`. If that path isn't a real persistent volume - e.g. Coolify was
-  reconfigured to use an anonymous/ephemeral volume, or the `./data`
-  directory was recreated - every redeploy wipes the tokens and all
-  previously sent links go dead. Fix: confirm `./data` (and `./config`,
-  `./filler`, `./logs`) are mapped to real persistent paths in Coolify's
-  storage settings, and never delete the `data` directory between deploys.
+- **DJ logins/credentials/ready-status disappear after a redeploy.** All of
+  it lives in SQLite under `./data`. If that path isn't a real persistent
+  volume - e.g. Coolify was reconfigured to use an anonymous/ephemeral
+  volume, or the `./data` directory was recreated - every redeploy wipes
+  the whole DJ roster and everyone has to log in and get re-approved from
+  scratch. Fix: confirm `./data` (and `./filler`, `./logs`) are mapped to
+  real persistent paths in Coolify's storage settings, and never delete the
+  `data` directory between deploys.
+
+- **A DJ (or the admin) gets a 401/403 they shouldn't.** Almost always means
+  the Authentik forward-auth middleware isn't actually attached to the
+  `api` service's route, or it's not injecting the header
+  `ONAIR_AUTH_USERNAME_HEADER` expects. Check Coolify's middleware
+  configuration on that domain, and that `ONAIR_ADMIN_USERNAME` in `.env`
+  exactly matches the admin's real Authentik username.
+
+- **Approving one more DJ fails with "Alle N Slots sind belegt".** All
+  `ONAIR_MAX_DJS` harbor slots are currently assigned to ready DJs. Either
+  revoke someone who isn't using theirs, or raise `ONAIR_MAX_DJS` in `.env`
+  and redeploy (this restarts Liquidsoap, so only do it between sets, never
+  while someone is live).
 
 Other situations the system already handles for you, no action needed:
 

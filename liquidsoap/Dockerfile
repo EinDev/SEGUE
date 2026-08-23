@@ -3,7 +3,7 @@ FROM savonet/liquidsoap:v2.2.5
 USER root
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3-jinja2 python3-yaml \
+    && apt-get install -y --no-install-recommends python3-jinja2 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY render_config.py /app/render_config.py

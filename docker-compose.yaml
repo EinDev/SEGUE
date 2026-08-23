@@ -3,15 +3,14 @@ services:
     build: ./liquidsoap
     restart: unless-stopped
     environment:
-      DJ1_PASSWORD: ${DJ1_PASSWORD}
-      DJ2_PASSWORD: ${DJ2_PASSWORD}
       ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
+      ONAIR_MAX_DJS: ${ONAIR_MAX_DJS:-6}
       ONAIR_LIQUIDSOAP_TELNET_PORT: ${ONAIR_LIQUIDSOAP_TELNET_PORT:-1234}
       ONAIR_HARBOR_PORT: ${ONAIR_HARBOR_PORT:-8005}
       ONAIR_OUTPUT_PORT: ${ONAIR_OUTPUT_PORT:-8000}
       ONAIR_WEBHOOK_URL: ${ONAIR_WEBHOOK_URL:-http://api:8080/internal/harbor/event}
+      ONAIR_AUTH_CHECK_URL: ${ONAIR_AUTH_CHECK_URL:-http://api:8080/internal/harbor/auth}
     volumes:
-      - ./config:/config:ro
       - ./filler:/filler:ro
       - ./logs:/logs
     ports:
@@ -43,26 +42,22 @@ services:
     depends_on:
       - liquidsoap
     environment:
-      # DJ passwords are also needed here (not just by liquidsoap) because
-      # the api expands the same ${VAR} placeholders in config/djs.yaml to
-      # show each DJ their own credentials in the DJ view. Keep this list in
-      # sync with liquidsoap's DJx_PASSWORD vars above and with config/djs.yaml.
-      DJ1_PASSWORD: ${DJ1_PASSWORD}
-      DJ2_PASSWORD: ${DJ2_PASSWORD}
-      ONAIR_ADMIN_TOKEN: ${ONAIR_ADMIN_TOKEN}
+      ONAIR_ADMIN_USERNAME: ${ONAIR_ADMIN_USERNAME}
+      ONAIR_AUTH_USERNAME_HEADER: ${ONAIR_AUTH_USERNAME_HEADER:-X-authentik-username}
       ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
+      ONAIR_MAX_DJS: ${ONAIR_MAX_DJS:-6}
       ONAIR_LIQUIDSOAP_HOST: ${ONAIR_LIQUIDSOAP_HOST:-liquidsoap}
       ONAIR_LIQUIDSOAP_TELNET_PORT: ${ONAIR_LIQUIDSOAP_TELNET_PORT:-1234}
       ONAIR_HARBOR_PUBLIC_HOST: ${ONAIR_HARBOR_PUBLIC_HOST}
       ONAIR_HARBOR_PUBLIC_PORT: ${ONAIR_HARBOR_PUBLIC_PORT:-8005}
       ONAIR_DEBOUNCE_SECONDS: ${ONAIR_DEBOUNCE_SECONDS:-2}
       ONAIR_DB_PATH: ${ONAIR_DB_PATH:-/data/onair.db}
-      ONAIR_PUBLIC_BASE_URL: ${ONAIR_PUBLIC_BASE_URL:-}
     volumes:
-      - ./config:/config:ro
       # Must be a persistent, named host path (not an anonymous volume that
-      # Coolify could recreate) - this is what keeps DJ tokens/links valid
-      # across a redeploy. See CONCEPT.md section 9/11.5.
+      # Coolify could recreate) - this is what keeps DJ logins/credentials
+      # alive across a redeploy. See CONCEPT.md section 9/11.5 (the DJ
+      # roster itself now lives entirely in this SQLite DB, self-registered
+      # via Authentik login - there is no config/djs.yaml file anymore).
       - ./data:/data
     expose:
       - "8080"
@@ -70,6 +65,11 @@ services:
       # automatic TLS) to this service through its own Traefik labels, which
       # it injects when the operator sets a domain on this service in the
       # Coolify UI. Publishing 8080 directly here would fight with that.
+      #
+      # IMPORTANT: that Coolify domain must have an Authentik forward-auth
+      # middleware attached to it (see README) - this app has no login form
+      # of its own and trusts the ONAIR_AUTH_USERNAME_HEADER header
+      # completely, assuming only the proxy can set it.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"]
       interval: 10s

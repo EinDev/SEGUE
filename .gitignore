@@ -1,6 +1,5 @@
-# Secrets and per-deployment config - never commit real values
+# Secrets - never commit real values
 .env
-config/djs.yaml
 
 # Persistent runtime data (SQLite DB, DJ tokens, event log)
 data/*

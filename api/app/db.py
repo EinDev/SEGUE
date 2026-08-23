@@ -1,15 +1,21 @@
 """SQLite persistence for SEGUE's api service.
 
 Plain synchronous stdlib sqlite3 -- this tool has very low concurrency (one
-admin, a few DJs), so a lightweight synchronous wrapper is plenty. Queries
-are tiny and local; callers that want to keep the event loop perfectly free
-may wrap calls in asyncio.to_thread, but it isn't required.
+admin, a handful of DJs), so a lightweight synchronous wrapper is plenty.
 
 Tables:
-  settings   -- single row holding the persisted "intentions": mode, pinned
-  dj_tokens  -- dj_id -> token, generated once and never regenerated
-  eventlog   -- append-only log of connect/disconnect, mode/pin changes,
-                on_air switches, etc.
+  settings  -- single row holding the persisted "intentions": mode, pinned
+  djs       -- self-registered DJs: username -> password/ready/slot. Rows
+               are created lazily on first login (see app.main's identity
+               dependency), never by a static config file.
+  eventlog  -- append-only log of connect/disconnect, mode/pin changes,
+               on_air switches, etc.
+
+Slot assignment: only a `ready` DJ ever holds a non-null `slot`. Flipping a
+DJ to ready picks the lowest-numbered free slot among `slot1..slot{max}`;
+flipping to not-ready always frees it. This is what makes a DJ's
+(username, password) independent of which physical harbor mount they end
+up on -- the credentials never encode a slot number.
 """
 from __future__ import annotations
 
@@ -17,11 +23,15 @@ import os
 import secrets
 import sqlite3
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class NoFreeSlotError(RuntimeError):
+    """Raised by set_ready(..., ready=True) when every slot is taken."""
 
 
 class Database:
@@ -35,6 +45,7 @@ class Database:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
         return conn
 
     def _init_schema(self) -> None:
@@ -53,9 +64,12 @@ class Database:
             )
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS dj_tokens (
-                    dj_id TEXT PRIMARY KEY,
-                    token TEXT UNIQUE NOT NULL
+                CREATE TABLE IF NOT EXISTS djs (
+                    username TEXT PRIMARY KEY,
+                    password TEXT NOT NULL,
+                    ready INTEGER NOT NULL DEFAULT 0,
+                    slot TEXT,
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -72,12 +86,12 @@ class Database:
 
     # -- settings (mode / pinned) ---------------------------------------
 
-    def load_settings(self) -> Tuple[str, Optional[str]]:
+    def load_settings(self) -> tuple[str, Optional[str]]:
         with self._connect() as conn:
             row = conn.execute("SELECT mode, pinned FROM settings WHERE id = 1").fetchone()
             if row is None:
                 return "AUTO", None
-            return row[0], row[1]
+            return row["mode"], row["pinned"]
 
     def save_settings(self, mode: str, pinned: Optional[str]) -> None:
         with self._connect() as conn:
@@ -86,33 +100,112 @@ class Database:
             )
             conn.commit()
 
-    # -- dj tokens --------------------------------------------------------
+    # -- djs --------------------------------------------------------------
 
-    def get_or_create_token(self, dj_id: str) -> str:
+    def get_or_create_dj(self, username: str) -> dict:
+        """Look up a DJ by username, self-registering them on first login.
+
+        Credentials (password) are generated exactly once and never
+        rotated by this call -- revisiting the dashboard just returns the
+        same row.
+        """
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT token FROM dj_tokens WHERE dj_id = ?", (dj_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM djs WHERE username = ?", (username,)).fetchone()
             if row is not None:
-                return row[0]
-            token = secrets.token_urlsafe(24)
+                return dict(row)
+            password = secrets.token_urlsafe(16)
             conn.execute(
-                "INSERT INTO dj_tokens (dj_id, token) VALUES (?, ?)", (dj_id, token)
+                "INSERT INTO djs (username, password, ready, slot, created_at) "
+                "VALUES (?, ?, 0, NULL, ?)",
+                (username, password, _iso_now()),
             )
             conn.commit()
-            return token
+            return {
+                "username": username,
+                "password": password,
+                "ready": 0,
+                "slot": None,
+                "created_at": _iso_now(),
+            }
 
-    def dj_id_for_token(self, token: str) -> Optional[str]:
+    def get_dj(self, username: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM djs WHERE username = ?", (username,)).fetchone()
+            return dict(row) if row is not None else None
+
+    def dj_exists(self, username: str) -> bool:
+        return self.get_dj(username) is not None
+
+    def is_ready(self, username: str) -> bool:
+        dj = self.get_dj(username)
+        return bool(dj and dj["ready"])
+
+    def list_djs(self) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM djs ORDER BY created_at ASC").fetchall()
+            return [dict(r) for r in rows]
+
+    def list_ready_usernames(self) -> List[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT username FROM djs WHERE ready = 1 ORDER BY created_at ASC"
+            ).fetchall()
+            return [r["username"] for r in rows]
+
+    def get_slot(self, username: str) -> Optional[str]:
+        dj = self.get_dj(username)
+        return dj["slot"] if dj else None
+
+    def username_for_slot(self, slot: str) -> Optional[str]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT dj_id FROM dj_tokens WHERE token = ?", (token,)
+                "SELECT username FROM djs WHERE slot = ? AND ready = 1", (slot,)
             ).fetchone()
-            return row[0] if row else None
+            return row["username"] if row else None
 
-    def all_tokens(self) -> dict[str, str]:
+    def check_credentials(self, username: str, password: str) -> bool:
+        dj = self.get_dj(username)
+        return bool(dj and dj["ready"] and secrets.compare_digest(dj["password"], password))
+
+    def set_ready(self, username: str, ready: bool, max_slots: int) -> Optional[str]:
+        """Toggle a DJ's ready flag, (de)assigning a slot as needed.
+
+        Returns the assigned slot (or None when turning ready off).
+        Raises NoFreeSlotError if turning ready on and every slot in
+        slot1..slot{max_slots} is already held by another ready DJ.
+        """
         with self._connect() as conn:
-            rows = conn.execute("SELECT dj_id, token FROM dj_tokens").fetchall()
-            return {dj_id: token for dj_id, token in rows}
+            row = conn.execute("SELECT * FROM djs WHERE username = ?", (username,)).fetchone()
+            if row is None:
+                raise ValueError(f"unknown dj: {username!r}")
+
+            if not ready:
+                conn.execute(
+                    "UPDATE djs SET ready = 0, slot = NULL WHERE username = ?", (username,)
+                )
+                conn.commit()
+                return None
+
+            if row["ready"] and row["slot"]:
+                return row["slot"]  # already ready, idempotent
+
+            taken = {
+                r["slot"]
+                for r in conn.execute(
+                    "SELECT slot FROM djs WHERE ready = 1 AND slot IS NOT NULL"
+                ).fetchall()
+            }
+            free_slot = next(
+                (f"slot{i}" for i in range(1, max_slots + 1) if f"slot{i}" not in taken), None
+            )
+            if free_slot is None:
+                raise NoFreeSlotError(f"all {max_slots} slots are taken")
+
+            conn.execute(
+                "UPDATE djs SET ready = 1, slot = ? WHERE username = ?", (free_slot, username)
+            )
+            conn.commit()
+            return free_slot
 
     # -- eventlog -----------------------------------------------------------
 
@@ -128,4 +221,4 @@ class Database:
             rows = conn.execute(
                 "SELECT ts, message FROM eventlog ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
-            return [{"ts": ts, "message": message} for ts, message in rows]
+            return [{"ts": r["ts"], "message": r["message"]} for r in rows]

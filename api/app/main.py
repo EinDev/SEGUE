@@ -1,5 +1,14 @@
-"""FastAPI app for SEGUE's api service: routes, static/template serving,
+"""FastAPI app for SEGUE's api service: routes, static file serving,
 websocket fan-out, and startup wiring of the state machine + telnet client.
+
+Identity/auth model: this service sits entirely behind a Coolify/Traefik
+proxy that runs Authentik forward-auth in front of it, so there is no login
+form or session cookie here at all -- every request that reaches this app
+is already an authenticated human, identified by a trusted request header
+(ONAIR_AUTH_USERNAME_HEADER, default "X-authentik-username"). The app's own
+job is only role differentiation: the one username in ONAIR_ADMIN_USERNAME
+gets the admin API; everyone else is treated as a DJ, who self-registers on
+first visit and starts out not-ready until the admin flips them on.
 """
 from __future__ import annotations
 
@@ -8,15 +17,14 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config as config_mod
-from .db import Database
+from .db import Database, NoFreeSlotError
 from .state import FILLER, StateManager
 from .telnet_client import TelnetClient
 
@@ -25,8 +33,6 @@ logger = logging.getLogger("segue.api")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
-
-ADMIN_COOKIE = "segue_admin"
 
 
 def _env(name: str, default: Optional[str] = None) -> str:
@@ -40,19 +46,28 @@ app = FastAPI(title="SEGUE api")
 
 
 # ---------------------------------------------------------------------------
-# Admin auth
+# Identity (trusted header from the Authentik forward-auth proxy)
 # ---------------------------------------------------------------------------
 
-def require_admin(request: Request) -> None:
-    token = request.cookies.get(ADMIN_COOKIE)
-    expected = app.state.admin_token
-    if not token or token != expected:
-        raise HTTPException(status_code=401, detail="unauthorized")
+def get_identity(request: Request) -> str:
+    username = request.headers.get(app.state.auth_header)
+    if not username:
+        raise HTTPException(
+            status_code=401,
+            detail=f"no {app.state.auth_header!r} header -- is this behind the Authentik proxy?",
+        )
+    return username
 
 
-def _admin_ws_ok(websocket: WebSocket) -> bool:
-    token = websocket.cookies.get(ADMIN_COOKIE)
-    return bool(token) and token == app.state.admin_token
+def require_admin(request: Request) -> str:
+    username = get_identity(request)
+    if username != app.state.admin_username:
+        raise HTTPException(status_code=403, detail="not the admin")
+    return username
+
+
+def _ws_identity(websocket: WebSocket) -> Optional[str]:
+    return websocket.headers.get(app.state.auth_header)
 
 
 # ---------------------------------------------------------------------------
@@ -77,11 +92,12 @@ class ConnectionManager:
             self.admin_sockets.discard(ws)
 
         dead = []
-        for ws, dj_id in list(self.dj_sockets.items()):
-            dj_state = state_manager.get_dj_state(dj_id)
+        for ws, username in list(self.dj_sockets.items()):
+            dj_state = state_manager.get_dj_state(username)
             if dj_state is None:
                 dead.append(ws)
                 continue
+            dj_state["dj"]["credentials"] = _dj_credentials(username)
             try:
                 await ws.send_json(dj_state)
             except Exception:  # noqa: BLE001
@@ -94,13 +110,24 @@ manager = ConnectionManager()
 
 
 # ---------------------------------------------------------------------------
+# Slot <-> username translation (the only place that needs both the DB and
+# the telnet client's raw slot-shaped payloads)
+# ---------------------------------------------------------------------------
+
+def _connected_usernames(slots: dict) -> Set[str]:
+    return {info["user"] for info in slots.values() if info.get("connected") and info.get("user")}
+
+
+# ---------------------------------------------------------------------------
 # Startup / shutdown
 # ---------------------------------------------------------------------------
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    app.state.admin_token = _env("ONAIR_ADMIN_TOKEN")
+    app.state.admin_username = _env("ONAIR_ADMIN_USERNAME")
+    app.state.auth_header = os.environ.get("ONAIR_AUTH_USERNAME_HEADER", "X-authentik-username")
     app.state.internal_secret = _env("ONAIR_INTERNAL_SECRET")
+    app.state.max_djs = int(os.environ.get("ONAIR_MAX_DJS", "6"))
     harbor_host = _env("ONAIR_HARBOR_PUBLIC_HOST", "")
     harbor_port = int(os.environ.get("ONAIR_HARBOR_PUBLIC_PORT", "8005"))
     debounce_seconds = float(os.environ.get("ONAIR_DEBOUNCE_SECONDS", "2"))
@@ -108,12 +135,7 @@ async def on_startup() -> None:
     liquidsoap_host = os.environ.get("ONAIR_LIQUIDSOAP_HOST", "liquidsoap")
     liquidsoap_port = int(os.environ.get("ONAIR_LIQUIDSOAP_TELNET_PORT", "1234"))
 
-    djs = config_mod.load_djs()
     db = Database(db_path)
-    for dj in djs:
-        db.get_or_create_token(dj.id)
-
-    app.state.djs = djs
     app.state.db = db
     app.state.harbor_host = harbor_host
     app.state.harbor_port = harbor_port
@@ -123,10 +145,19 @@ async def on_startup() -> None:
 
     mode, pinned = db.load_settings()
 
+    async def telnet_set_target(dj_id: str) -> None:
+        if dj_id == FILLER:
+            await telnet.set_target(FILLER)
+            return
+        slot = db.get_slot(dj_id)
+        if slot is None:
+            raise RuntimeError(f"{dj_id} has no assigned slot (not ready?)")
+        await telnet.set_target(slot)
+
     state_manager = StateManager(
-        djs=djs,
+        db=db,
         debounce_seconds=debounce_seconds,
-        telnet_set_target=telnet.set_target,
+        telnet_set_target=telnet_set_target,
         on_broadcast=manager.broadcast,
         log_event=db.log_event,
         save_settings=db.save_settings,
@@ -135,17 +166,22 @@ async def on_startup() -> None:
     app.state.state_manager = state_manager
 
     async def on_connect(is_first: bool) -> None:
-        ready, target = await telnet.status()
+        slots, target_slot = await telnet.status()
+        connected = _connected_usernames(slots)
         if is_first:
-            await state_manager.startup_sync(ready, target)
+            if target_slot == FILLER:
+                target_username = FILLER
+            else:
+                target_username = db.username_for_slot(target_slot) or FILLER
+            await state_manager.startup_sync(connected, target_username)
         else:
-            await state_manager.reconcile(ready)
+            await state_manager.reconcile(connected)
 
     async def on_alive_change(alive: bool) -> None:
         await state_manager.set_telnet_alive(alive)
 
-    async def on_reconcile(ready: dict) -> None:
-        await state_manager.reconcile(ready)
+    async def on_reconcile(slots: dict) -> None:
+        await state_manager.reconcile(_connected_usernames(slots))
 
     app.state.telnet_task = asyncio.create_task(
         telnet.run_forever(on_connect, on_alive_change, on_reconcile)
@@ -173,27 +209,6 @@ async def healthz() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Admin session
-# ---------------------------------------------------------------------------
-
-class SessionRequest(BaseModel):
-    token: str
-
-
-@app.post("/api/session")
-async def create_session(body: SessionRequest, response: Response) -> dict:
-    if body.token != app.state.admin_token:
-        raise HTTPException(status_code=401, detail="invalid token")
-    response.set_cookie(
-        ADMIN_COOKIE,
-        body.token,
-        httponly=True,
-        samesite="lax",
-    )
-    return {"ok": True}
-
-
-# ---------------------------------------------------------------------------
 # Admin REST
 # ---------------------------------------------------------------------------
 
@@ -217,14 +232,14 @@ async def post_mode(body: ModeRequest, request: Request) -> dict:
 
 
 class PinRequest(BaseModel):
-    dj_id: str
+    username: str
 
 
 @app.post("/api/pin")
 async def post_pin(body: PinRequest, request: Request) -> dict:
     require_admin(request)
     try:
-        await app.state.state_manager.set_pin(body.dj_id)
+        await app.state.state_manager.set_pin(body.username)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return app.state.state_manager.get_full_state()
@@ -243,10 +258,53 @@ async def get_log(request: Request, limit: int = 100) -> list:
     return app.state.db.get_log(limit=limit)
 
 
+# ---------------------------------------------------------------------------
+# Admin: DJ roster management (registration + ready approval)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/djs")
+async def list_djs(request: Request) -> list:
+    require_admin(request)
+    connected = set(app.state.state_manager.connected_since)
+    return [
+        {
+            "username": dj["username"],
+            "ready": bool(dj["ready"]),
+            "slot": dj["slot"],
+            "connected": dj["username"] in connected,
+            "created_at": dj["created_at"],
+        }
+        for dj in app.state.db.list_djs()
+    ]
+
+
+class ReadyRequest(BaseModel):
+    ready: bool
+
+
+@app.post("/api/djs/{username}/ready")
+async def set_dj_ready(username: str, body: ReadyRequest, request: Request) -> dict:
+    require_admin(request)
+    if app.state.db.get_dj(username) is None:
+        raise HTTPException(status_code=404, detail="unknown dj")
+    try:
+        slot = app.state.db.set_ready(username, body.ready, app.state.max_djs)
+    except NoFreeSlotError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Alle {app.state.max_djs} Slots sind belegt - zuerst einen anderen DJ deaktivieren.",
+        )
+    app.state.db.log_event(
+        f"{username} freigeschaltet (Slot {slot})" if body.ready else f"{username} deaktiviert"
+    )
+    return {"username": username, "ready": body.ready, "slot": slot}
+
+
 @app.websocket("/ws")
 async def ws_admin(websocket: WebSocket) -> None:
-    if not _admin_ws_ok(websocket):
-        await websocket.close(code=4401)
+    username = _ws_identity(websocket)
+    if not username or username != app.state.admin_username:
+        await websocket.close(code=4403)
         return
     await websocket.accept()
     manager.admin_sockets.add(websocket)
@@ -268,53 +326,51 @@ async def ws_admin(websocket: WebSocket) -> None:
 # DJ routes
 # ---------------------------------------------------------------------------
 
-def _dj_credentials(dj_id: str) -> dict:
-    dj = next(d for d in app.state.djs if d.id == dj_id)
+def _dj_credentials(username: str) -> Optional[dict]:
+    dj = app.state.db.get_dj(username)
+    if dj is None or not dj["ready"] or not dj["slot"]:
+        return None
     return {
         "host": app.state.harbor_host,
         "port": app.state.harbor_port,
-        "mount": dj.mount,
-        "user": dj.id,
-        "password": dj.password,
+        "mount": dj["slot"],
+        "user": username,
+        "password": dj["password"],
         "format_hint": "MP3 320kbps oder Ogg Vorbis",
     }
 
 
-@app.get("/dj/{token}")
-async def dj_view(token: str) -> FileResponse:
-    dj_id = app.state.db.dj_id_for_token(token)
-    if dj_id is None:
-        raise HTTPException(status_code=404, detail="unknown token")
+@app.get("/dj")
+async def dj_view(request: Request) -> FileResponse:
+    get_identity(request)  # just ensure the proxy actually authenticated someone
     path = STATIC_DIR / "dj" / "index.html"
     if not path.exists():
         raise HTTPException(status_code=404, detail="dj frontend not built yet")
     return FileResponse(path)
 
 
-@app.get("/api/dj/{token}/state")
-async def dj_state(token: str) -> dict:
-    dj_id = app.state.db.dj_id_for_token(token)
-    if dj_id is None:
-        raise HTTPException(status_code=404, detail="unknown token")
-    state = app.state.state_manager.get_dj_state(dj_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="unknown dj")
-    state["dj"]["credentials"] = _dj_credentials(dj_id)
+@app.get("/api/dj/me")
+async def dj_state(request: Request) -> dict:
+    username = get_identity(request)
+    app.state.db.get_or_create_dj(username)  # self-register on first visit
+    state = app.state.state_manager.get_dj_state(username)
+    state["dj"]["credentials"] = _dj_credentials(username)
     return state
 
 
-@app.websocket("/ws/dj/{token}")
-async def ws_dj(websocket: WebSocket, token: str) -> None:
-    dj_id = app.state.db.dj_id_for_token(token)
-    if dj_id is None:
-        await websocket.close(code=4404)
+@app.websocket("/ws/dj")
+async def ws_dj(websocket: WebSocket) -> None:
+    username = _ws_identity(websocket)
+    if not username:
+        await websocket.close(code=4401)
         return
+    app.state.db.get_or_create_dj(username)
     await websocket.accept()
-    manager.dj_sockets[websocket] = dj_id
+    manager.dj_sockets[websocket] = username
     try:
-        initial = app.state.state_manager.get_dj_state(dj_id)
+        initial = app.state.state_manager.get_dj_state(username)
         if initial is not None:
-            initial["dj"]["credentials"] = _dj_credentials(dj_id)
+            initial["dj"]["credentials"] = _dj_credentials(username)
             await websocket.send_json(initial)
         while True:
             await websocket.receive_text()
@@ -327,7 +383,8 @@ async def ws_dj(websocket: WebSocket, token: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Internal webhook
+# Internal: harbor webhook + auth-check (container-to-container only, never
+# routed through the public domain / Authentik proxy)
 # ---------------------------------------------------------------------------
 
 @app.post("/internal/harbor/event")
@@ -336,16 +393,33 @@ async def harbor_event(request: Request) -> dict:
     if secret != app.state.internal_secret:
         raise HTTPException(status_code=403, detail="forbidden")
     body = await request.json()
-    dj_id = body.get("dj_id")
+    username = body.get("user")
+    slot = body.get("slot")
     event = body.get("event")
     ts = body.get("ts")
     received_at = datetime.now(timezone.utc)
-    logger.info("harbor event dj_id=%s event=%s liquidsoap_ts=%s", dj_id, event, ts)
+    logger.info("harbor event slot=%s user=%s event=%s liquidsoap_ts=%s", slot, username, event, ts)
     # Never block the webhook response on the debounce/resolve pipeline.
     asyncio.create_task(
-        app.state.state_manager.handle_webhook_event(dj_id, event, received_at)
+        app.state.state_manager.handle_webhook_event(username, event, received_at)
     )
     return {"ok": True}
+
+
+@app.get("/internal/harbor/auth", response_class=PlainTextResponse)
+async def harbor_auth(request: Request, user: str = "", password: str = "", address: str = "") -> str:
+    secret = request.headers.get("X-Onair-Secret")
+    if secret != app.state.internal_secret:
+        raise HTTPException(status_code=403, detail="forbidden")
+    ok = app.state.db.check_credentials(user, password)
+    if not ok:
+        # CONCEPT.md §10: "häufigster Supportfall am Abend" -- make wrong
+        # credentials visible in the admin log with who and where from.
+        reason = "unbekannter Benutzer" if not app.state.db.dj_exists(user) else (
+            "nicht freigeschaltet" if not app.state.db.is_ready(user) else "falsches Passwort"
+        )
+        app.state.db.log_event(f"Harbor-Login fehlgeschlagen: {user!r} von {address} ({reason})")
+    return "true" if ok else "false"
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +434,4 @@ async def admin_view() -> FileResponse:
     return FileResponse(path)
 
 
-# check_dir=False: the parallel frontend agent may not have populated
-# api/static/ yet when this service starts; StaticFiles must not crash on
-# mount, it should just 404 individual requests until files show up.
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")

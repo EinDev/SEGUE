@@ -1,15 +1,18 @@
 // SEGUE — DJ view logic.
-// Token comes from the URL path (/dj/{token}), never hardcoded.
+//
+// No token in the URL anymore: identity comes from the Authentik
+// forward-auth proxy in front of this whole app, via a trusted request
+// header the api reads server-side. This page just calls the fixed
+// /api/dj/me endpoint and /ws/dj websocket -- whoever is authenticated is
+// whoever it is, self-registering on first visit if they're new.
 
 (function () {
   "use strict";
 
-  const token = decodeURIComponent(
-    window.location.pathname.split("/").filter(Boolean).pop() || ""
-  );
-
   const appEl = document.getElementById("app");
+  const pendingAppEl = document.getElementById("pending-app");
   const errorAppEl = document.getElementById("error-app");
+  const pendingUsernameEl = document.getElementById("pending-username");
   const overlayEl = document.getElementById("conn-overlay");
 
   const tallyEl = document.getElementById("tally");
@@ -19,8 +22,7 @@
   const otherDjsListEl = document.getElementById("other-djs-list");
 
   let latestState = null;
-  let sinceTickHandle = null;
-  let invalidToken = false;
+  let deniedHard = false; // true only on 401 (no identity at all) -- not retried
 
   // ---- Connection resilience state ----
   let ws = null;
@@ -28,16 +30,12 @@
   const WS_BACKOFF_MAX = 15000;
   let wsReconnectTimer = null;
   let pollTimer = null;
-  let lastFetchOk = true; // becomes false when a poll/fetch errors out
+  let lastFetchOk = true;
   let wsConnected = false;
-
-  function apiStateUrl() {
-    return `/api/dj/${encodeURIComponent(token)}/state`;
-  }
 
   function wsUrl() {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${window.location.host}/ws/dj/${encodeURIComponent(token)}`;
+    return `${proto}//${window.location.host}/ws/dj`;
   }
 
   function setConnLost(lost) {
@@ -46,17 +44,20 @@
   }
 
   function updateConnIndicator() {
-    // "Down" means: WS is not currently connected AND the fallback poll
-    // itself is failing (or hasn't succeeded).
+    if (deniedHard) {
+      setConnLost(false);
+      return;
+    }
     const down = !wsConnected && !lastFetchOk;
     setConnLost(down);
   }
 
-  function showInvalidToken() {
-    invalidToken = true;
+  function showError() {
+    deniedHard = true;
     appEl.classList.add("hidden");
+    pendingAppEl.classList.add("hidden");
     errorAppEl.classList.remove("hidden");
-    setConnLost(false); // don't show "connection lost" over an intentional error state
+    setConnLost(false);
     stopPolling();
     if (ws) {
       try { ws.close(); } catch (e) { /* ignore */ }
@@ -68,12 +69,25 @@
     }
   }
 
+  function showPending(username) {
+    appEl.classList.add("hidden");
+    errorAppEl.classList.add("hidden");
+    pendingAppEl.classList.remove("hidden");
+    pendingUsernameEl.textContent = username || "";
+  }
+
   function render(state) {
     latestState = state;
-    appEl.classList.remove("hidden");
-    errorAppEl.classList.add("hidden");
-
     const dj = state.dj;
+
+    if (!dj.ready) {
+      showPending(dj.username);
+      return;
+    }
+
+    pendingAppEl.classList.add("hidden");
+    errorAppEl.classList.add("hidden");
+    appEl.classList.remove("hidden");
 
     // Tally
     tallyEl.classList.remove("state-disconnected", "state-connected", "state-onair");
@@ -87,7 +101,7 @@
       tallyEl.classList.add("state-connected");
       tallyLabelEl.textContent = "VERBUNDEN — NICHT ON AIR";
     }
-    tallyNameEl.textContent = dj.name || "";
+    tallyNameEl.textContent = dj.username || "";
 
     renderLiveNow(state);
     renderOtherDjs(state);
@@ -95,21 +109,19 @@
   }
 
   function renderLiveNow(state) {
-    const onAirId = state.on_air;
-    if (!onAirId || onAirId === "FILLER") {
+    const onAirUsername = state.on_air;
+    if (!onAirUsername || onAirUsername === "FILLER") {
       liveNowEl.innerHTML = `Aktuell on air: <span class="filler">Filler</span>`;
       return;
     }
-    const djInfo = (state.djs || []).find((d) => d.id === onAirId);
-    const name = djInfo ? djInfo.name : onAirId;
-    // Duration: only computable if it's this DJ (we have "since"), otherwise
-    // fall back to no duration since reduced state only carries `since` for self.
+    // Duration is only computable for yourself (reduced state only carries
+    // `since` for the viewer's own dj object, not for other usernames).
     let sinceIso = null;
-    if (state.dj && state.dj.id === onAirId) {
+    if (state.dj && state.dj.username === onAirUsername) {
       sinceIso = state.dj.since;
     }
     liveNowEl.innerHTML =
-      `Aktuell on air: <span class="name">${escapeHtml(name)}</span>` +
+      `Aktuell on air: <span class="name">${escapeHtml(onAirUsername)}</span>` +
       (sinceIso ? ` <span id="live-since-suffix"></span>` : "");
     liveNowEl.dataset.sinceIso = sinceIso || "";
   }
@@ -128,19 +140,19 @@
   }
 
   function renderOtherDjs(state) {
-    const selfId = state.dj ? state.dj.id : null;
-    const others = (state.djs || []).filter((d) => d.id !== selfId);
+    const selfUsername = state.dj ? state.dj.username : null;
+    const others = (state.djs || []).filter((d) => d.username !== selfUsername);
     otherDjsListEl.innerHTML = "";
     if (others.length === 0) {
       const li = document.createElement("li");
-      li.textContent = "Keine weiteren DJs konfiguriert.";
+      li.textContent = "Keine weiteren freigeschalteten DJs.";
       otherDjsListEl.appendChild(li);
       return;
     }
     for (const d of others) {
       const li = document.createElement("li");
       const nameSpan = document.createElement("span");
-      nameSpan.textContent = d.name;
+      nameSpan.textContent = d.username;
       const pill = document.createElement("span");
       pill.className = "pill " + (d.connected ? "pill-connected" : "pill-disconnected");
       pill.textContent = d.connected ? "verbunden" : "nicht verbunden";
@@ -218,14 +230,14 @@
   async function fetchStateOnce() {
     let resp;
     try {
-      resp = await fetch(apiStateUrl(), { credentials: "same-origin" });
+      resp = await fetch("/api/dj/me", { credentials: "same-origin" });
     } catch (e) {
       lastFetchOk = false;
       updateConnIndicator();
       return;
     }
-    if (resp.status === 404) {
-      showInvalidToken();
+    if (resp.status === 401) {
+      showError();
       return;
     }
     if (!resp.ok) {
@@ -257,7 +269,7 @@
   }
 
   function connectWs() {
-    if (invalidToken) return;
+    if (deniedHard) return;
     try {
       ws = new WebSocket(wsUrl());
     } catch (e) {
@@ -269,7 +281,6 @@
       wsConnected = true;
       wsBackoffMs = 1000;
       updateConnIndicator();
-      // WS is live: drop back to WS-only push.
       stopPolling();
     };
 
@@ -286,9 +297,9 @@
 
     ws.onclose = () => {
       wsConnected = false;
-      if (invalidToken) return; // don't resurrect polling under the error page
+      if (deniedHard) return;
       updateConnIndicator();
-      startPolling(); // fallback while WS is down
+      startPolling();
       scheduleWsReconnect();
     };
 
@@ -298,7 +309,7 @@
   }
 
   function scheduleWsReconnect() {
-    if (invalidToken) return;
+    if (deniedHard) return;
     if (wsReconnectTimer) return;
     wsReconnectTimer = setTimeout(() => {
       wsReconnectTimer = null;
@@ -309,16 +320,12 @@
 
   // ---- Boot ----
 
-  if (!token) {
-    showInvalidToken();
-  } else {
-    fetchStateOnce().then(() => {
-      if (!invalidToken) {
-        startPolling(); // active until WS confirms it's up
-        connectWs();
-      }
-    });
-  }
+  fetchStateOnce().then(() => {
+    if (!deniedHard) {
+      startPolling(); // active until WS confirms it's up
+      connectWs();
+    }
+  });
 
-  sinceTickHandle = setInterval(tickSince, 1000);
+  setInterval(tickSince, 1000);
 })();

@@ -1,46 +1,19 @@
 #!/usr/bin/env python3
 import os
-import re
 import sys
 
-import yaml
 from jinja2 import Environment, StrictUndefined
-
-ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-
-def expand_env(text):
-    def replace(match):
-        name = match.group(1)
-        value = os.environ.get(name)
-        if value is None:
-            raise SystemExit(f"render_config: environment variable {name} is not set")
-        return value
-
-    return ENV_PATTERN.sub(replace, text)
 
 
 def main():
-    if len(sys.argv) != 4:
-        raise SystemExit("usage: render_config.py <djs.yaml> <main.liq.j2> <out.liq>")
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: render_config.py <main.liq.j2> <out.liq>")
 
-    djs_path, template_path, out_path = sys.argv[1:4]
+    template_path, out_path = sys.argv[1:3]
 
-    with open(djs_path, "r", encoding="utf-8") as f:
-        raw = expand_env(f.read())
-    data = yaml.safe_load(raw) or {}
-    djs = data.get("djs", [])
-    if not djs:
-        raise SystemExit("render_config: djs.yaml defines no DJs")
-
-    seen_ids = set()
-    for dj in djs:
-        for field in ("id", "name", "mount", "password"):
-            if not dj.get(field):
-                raise SystemExit(f"render_config: DJ entry missing required field '{field}': {dj}")
-        if dj["id"] in seen_ids:
-            raise SystemExit(f"render_config: duplicate DJ id '{dj['id']}'")
-        seen_ids.add(dj["id"])
+    max_djs = int(os.environ.get("ONAIR_MAX_DJS", "6"))
+    if max_djs < 1:
+        raise SystemExit("render_config: ONAIR_MAX_DJS must be at least 1")
 
     with open(template_path, "r", encoding="utf-8") as f:
         template_src = f.read()
@@ -49,11 +22,12 @@ def main():
     template = env.from_string(template_src)
 
     rendered = template.render(
-        djs=djs,
+        max_djs=max_djs,
         telnet_port=os.environ.get("ONAIR_LIQUIDSOAP_TELNET_PORT", "1234"),
         harbor_port=os.environ.get("ONAIR_HARBOR_PORT", "8005"),
         output_port=os.environ.get("ONAIR_OUTPUT_PORT", "8000"),
         webhook_url=os.environ.get("ONAIR_WEBHOOK_URL", "http://api:8080/internal/harbor/event"),
+        auth_check_url=os.environ.get("ONAIR_AUTH_CHECK_URL", "http://api:8080/internal/harbor/auth"),
         internal_secret=os.environ["ONAIR_INTERNAL_SECRET"],
     )
 

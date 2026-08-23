@@ -7,9 +7,17 @@ with zero or more payload lines followed by a line containing exactly
 
 Two custom commands are registered on the Liquidsoap side:
 
-  onair.set <id>   -> one line with the new target, then END
-  onair.status     -> one line of compact JSON, then END
-                      {"target": "FILLER", "ready": {"dj1": true, ...}}
+  onair.set <slot-id|FILLER>  -> one line with the new target, then END
+  onair.status                -> one line of compact JSON, then END
+      {"target": "slot2", "slots": {"slot1": {"connected": false, "user": ""},
+                                     "slot2": {"connected": true, "user": "eindev"}}}
+
+This module is deliberately protocol-only and knows nothing about DJs or
+usernames as a *roster* concept -- it just reports what Liquidsoap itself
+reports (which slots are live and which username each captured at auth
+time). Translating slot ids to/from usernames is app.main's job, since
+that requires the DB (the slot pool is generic; only the DB knows which
+username currently owns a given slot).
 """
 from __future__ import annotations
 
@@ -22,7 +30,7 @@ logger = logging.getLogger("segue.telnet")
 
 OnConnectCb = Callable[[bool], Awaitable[None]]  # arg: is_first_connect
 OnAliveChangeCb = Callable[[bool], Awaitable[None]]
-OnReconcileCb = Callable[[Dict[str, bool]], Awaitable[None]]
+OnReconcileCb = Callable[[Dict[str, dict]], Awaitable[None]]  # arg: raw `slots` map
 
 
 class TelnetClient:
@@ -71,14 +79,14 @@ class TelnetClient:
         lines = await self._send(f"onair.set {value}")
         return lines[0].strip() if lines else value
 
-    async def status(self) -> Tuple[Dict[str, bool], str]:
+    async def status(self) -> Tuple[Dict[str, dict], str]:
         lines = await self._send("onair.status")
         if not lines:
             raise ConnectionError("onair.status returned no payload")
         payload = json.loads(lines[0])
-        ready = {k: bool(v) for k, v in (payload.get("ready") or {}).items()}
+        slots = payload.get("slots") or {}
         target = payload.get("target", "FILLER")
-        return ready, target
+        return slots, target
 
     async def run_forever(
         self,
@@ -109,8 +117,8 @@ class TelnetClient:
                 backoff = backoff_start
                 while True:
                     await asyncio.sleep(poll_interval)
-                    ready, _target = await self.status()
-                    await on_reconcile(ready)
+                    slots, _target = await self.status()
+                    await on_reconcile(slots)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - reconnect loop must never die

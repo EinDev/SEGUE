@@ -1,13 +1,16 @@
 // SEGUE — Admin view logic.
+//
+// No login form: this page sits behind Authentik forward-auth (configured
+// at the Coolify/Traefik level), so by the time a request reaches this app
+// it's already an authenticated human. The only question left is whether
+// that human is *the* admin (ONAIR_ADMIN_USERNAME) -- if not, the api
+// answers every /api/* call with 403 and this page just shows a denied
+// screen instead of the dashboard. There is nothing to log in *to* here.
 
 (function () {
   "use strict";
 
-  const loginAppEl = document.getElementById("login-app");
-  const loginFormEl = document.getElementById("login-box");
-  const loginTokenEl = document.getElementById("login-token");
-  const loginErrorEl = document.getElementById("login-error");
-
+  const deniedEl = document.getElementById("denied-app");
   const appEl = document.getElementById("app");
   const overlayEl = document.getElementById("conn-overlay");
 
@@ -19,13 +22,14 @@
   const warningTextEl = document.getElementById("warning-text");
   const fillerBtn = document.getElementById("filler-btn");
   const djRowsEl = document.getElementById("dj-rows");
+  const rosterRowsEl = document.getElementById("roster-rows");
   const eventlogEl = document.getElementById("eventlog");
 
-  let authenticated = false;
-  let latestState = null;
+  let authorized = false;
+  let rosterError = null; // { username, message } shown inline on that row
 
   // ---- Clock: seeded from server_time, ticks locally ----
-  let clockOffsetMs = 0; // server_time - local Date.now() at time of last state push
+  let clockOffsetMs = 0;
   let clockTimer = null;
 
   function seedClock(serverTimeIso) {
@@ -63,7 +67,7 @@
   }
 
   function updateConnIndicator() {
-    if (!authenticated) {
+    if (!authorized) {
       setConnLost(false);
       return;
     }
@@ -71,38 +75,8 @@
     setConnLost(down);
   }
 
-  // ---- Login ----
-
-  loginFormEl.addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    loginErrorEl.textContent = "";
-    const token = loginTokenEl.value;
-    if (!token) return;
-    let resp;
-    try {
-      resp = await fetch("/api/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ token }),
-      });
-    } catch (e) {
-      loginErrorEl.textContent = "Server nicht erreichbar.";
-      return;
-    }
-    if (resp.status === 401) {
-      loginErrorEl.textContent = "Falsches Token.";
-      return;
-    }
-    if (!resp.ok) {
-      loginErrorEl.textContent = "Unerwarteter Fehler.";
-      return;
-    }
-    onAuthenticated();
-  });
-
-  function showLogin() {
-    authenticated = false;
+  function showDenied() {
+    authorized = false;
     stopPolling();
     if (ws) {
       try { ws.close(); } catch (e) { /* ignore */ }
@@ -118,14 +92,12 @@
     }
     setConnLost(false);
     appEl.classList.add("hidden");
-    loginAppEl.classList.remove("hidden");
-    loginTokenEl.value = "";
-    loginTokenEl.focus();
+    deniedEl.classList.remove("hidden");
   }
 
-  function onAuthenticated() {
-    authenticated = true;
-    loginAppEl.classList.add("hidden");
+  function onAuthorized() {
+    authorized = true;
+    deniedEl.classList.add("hidden");
     appEl.classList.remove("hidden");
     wsBackoffMs = 1000;
     fetchStateOnce().then(() => {
@@ -133,15 +105,15 @@
       connectWs();
     });
     fetchLog();
+    fetchRoster();
     if (!clockTimer) {
       clockTimer = setInterval(tickClock, 1000);
     }
   }
 
-  // ---- Rendering ----
+  // ---- Rendering: on-air state ----
 
   function render(state) {
-    latestState = state;
     seedClock(state.server_time);
     tickClock();
 
@@ -162,13 +134,21 @@
 
   function renderDjRows(state) {
     djRowsEl.innerHTML = "";
-    for (const dj of state.djs || []) {
+    const djs = state.djs || [];
+    if (djs.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-faint";
+      empty.textContent = "Noch keine freigeschalteten DJs.";
+      djRowsEl.appendChild(empty);
+      return;
+    }
+    for (const dj of djs) {
       const row = document.createElement("div");
-      row.className = "dj-row" + (state.on_air === dj.id ? " on-air" : "");
+      row.className = "dj-row" + (state.on_air === dj.username ? " on-air" : "");
 
       const name = document.createElement("div");
       name.className = "dj-name";
-      name.textContent = dj.name;
+      name.textContent = dj.username;
 
       const pill = document.createElement("span");
       pill.className = "pill " + (dj.connected ? "pill-connected" : "pill-disconnected");
@@ -185,7 +165,7 @@
       btn.className = "onair-btn";
       btn.textContent = "On Air schalten";
       btn.disabled = !dj.connected;
-      btn.addEventListener("click", () => pinDj(dj.id));
+      btn.addEventListener("click", () => pinDj(dj.username));
 
       row.appendChild(name);
       row.appendChild(pill);
@@ -205,6 +185,78 @@
     return `seit ${hh}:${mm}`;
   }
 
+  // ---- Rendering: DJ roster (registration + ready approval) ----
+
+  function renderRoster(djs) {
+    rosterRowsEl.innerHTML = "";
+    if (!djs || djs.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-faint";
+      empty.textContent = "Noch niemand hat sich über den DJ-Link angemeldet.";
+      rosterRowsEl.appendChild(empty);
+      return;
+    }
+    for (const dj of djs) {
+      const row = document.createElement("div");
+      row.className = "roster-row";
+
+      const name = document.createElement("div");
+      name.className = "username";
+      name.textContent = dj.username;
+
+      const pill = document.createElement("span");
+      pill.className = "pill " + (dj.connected ? "pill-connected" : "pill-disconnected");
+      pill.textContent = dj.connected ? "verbunden" : "nicht verbunden";
+
+      const slot = document.createElement("div");
+      slot.className = "slot";
+      slot.textContent = dj.slot || "";
+
+      const spacer = document.createElement("div");
+      spacer.className = "spacer";
+
+      const toggle = document.createElement("button");
+      toggle.className = "ready-toggle" + (dj.ready ? " on" : "");
+      toggle.textContent = dj.ready ? "Bereit" : "Nicht bereit";
+      toggle.addEventListener("click", () => setReady(dj.username, !dj.ready));
+
+      row.appendChild(name);
+      row.appendChild(pill);
+      row.appendChild(slot);
+      row.appendChild(spacer);
+      row.appendChild(toggle);
+
+      if (rosterError && rosterError.username === dj.username) {
+        const err = document.createElement("div");
+        err.className = "roster-error";
+        err.textContent = rosterError.message;
+        row.appendChild(err);
+      }
+
+      rosterRowsEl.appendChild(row);
+    }
+  }
+
+  async function setReady(username, ready) {
+    rosterError = null;
+    try {
+      const resp = await authedFetch(`/api/djs/${encodeURIComponent(username)}/ready`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ready }),
+      });
+      if (resp.status === 409) {
+        const body = await resp.json().catch(() => ({}));
+        rosterError = { username, message: body.detail || "Kein freier Slot verfügbar." };
+      }
+    } catch (e) {
+      // handled via authedFetch (401) or network error; nothing else to do
+    }
+    fetchRoster();
+  }
+
+  // ---- Eventlog ----
+
   function renderLog(entries) {
     eventlogEl.innerHTML = "";
     if (!entries || entries.length === 0) {
@@ -214,7 +266,6 @@
       eventlogEl.appendChild(row);
       return;
     }
-    // Most-recent-first at the top.
     for (const entry of entries) {
       const row = document.createElement("div");
       row.className = "log-row";
@@ -249,11 +300,11 @@
       updateConnIndicator();
       throw e;
     }
-    if (resp.status === 401) {
-      showLogin();
-      throw new Error("unauthorized");
+    if (resp.status === 401 || resp.status === 403) {
+      showDenied();
+      throw new Error("not authorized");
     }
-    lastFetchOk = resp.ok;
+    lastFetchOk = resp.ok || resp.status === 409; // a 409 is a valid, connected response
     updateConnIndicator();
     return resp;
   }
@@ -271,12 +322,12 @@
     } catch (e) { /* handled via authedFetch */ }
   }
 
-  async function pinDj(djId) {
+  async function pinDj(username) {
     try {
       await authedFetch("/api/pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dj_id: djId }),
+        body: JSON.stringify({ username }),
       });
     } catch (e) { /* handled via authedFetch */ }
   }
@@ -302,6 +353,21 @@
     } catch (e) {
       lastFetchOk = false;
       updateConnIndicator();
+    }
+  }
+
+  async function fetchRoster() {
+    let resp;
+    try {
+      resp = await authedFetch("/api/djs");
+    } catch (e) {
+      return;
+    }
+    try {
+      const djs = await resp.json();
+      renderRoster(djs);
+    } catch (e) {
+      // non-fatal for the connection indicator
     }
   }
 
@@ -334,6 +400,7 @@
     pollTimer = setInterval(() => {
       fetchStateOnce();
       fetchLog();
+      fetchRoster();
     }, 3000);
   }
 
@@ -345,7 +412,7 @@
   }
 
   function connectWs() {
-    if (!authenticated) return;
+    if (!authorized) return;
     try {
       ws = new WebSocket(wsUrl());
     } catch (e) {
@@ -366,8 +433,9 @@
         render(data);
         lastFetchOk = true;
         updateConnIndicator();
-        // The eventlog isn't part of the pushed state; refresh it opportunistically
-        // (debounced so a burst of pushes doesn't hammer the endpoint).
+        // Eventlog and the DJ roster aren't part of the pushed state; refresh
+        // them opportunistically (debounced so a burst of pushes doesn't
+        // hammer the endpoints).
         fetchLogDebounced();
       } catch (e) {
         // ignore malformed message
@@ -377,7 +445,7 @@
     ws.onclose = () => {
       wsConnected = false;
       updateConnIndicator();
-      if (authenticated) {
+      if (authorized) {
         startPolling();
         scheduleWsReconnect();
       }
@@ -389,7 +457,7 @@
   }
 
   function scheduleWsReconnect() {
-    if (!authenticated) return;
+    if (!authorized) return;
     if (wsReconnectTimer) return;
     wsReconnectTimer = setTimeout(() => {
       wsReconnectTimer = null;
@@ -398,23 +466,23 @@
     wsBackoffMs = Math.min(wsBackoffMs * 2, WS_BACKOFF_MAX);
   }
 
-  // ---- Boot: try a state fetch; 401 means "show login", success means
-  // a session cookie already existed (e.g. page refresh). ----
+  // ---- Boot: a 200 on /api/state means the Authentik-authenticated user
+  // is the admin; 401/403 means either "not behind the proxy" or "not the
+  // admin" -- either way, show the denied screen instead of a login form,
+  // since there is nothing this page can do to log the user in itself. ----
 
   (async function boot() {
     let resp;
     try {
       resp = await fetch("/api/state", { credentials: "same-origin" });
     } catch (e) {
-      // Can't reach the server at all; show login, resilience layer will
-      // report connection loss once authenticated.
-      showLogin();
+      showDenied();
       return;
     }
     if (resp.ok) {
-      onAuthenticated();
+      onAuthorized();
     } else {
-      showLogin();
+      showDenied();
     }
   })();
 })();
