@@ -532,11 +532,17 @@
       toggle.textContent = dj.ready ? "Bereit" : "Nicht bereit";
       toggle.addEventListener("click", () => setReady(dj.username, !dj.ready));
 
+      const del = document.createElement("button");
+      del.className = "delete-btn";
+      del.textContent = "Löschen";
+      del.addEventListener("click", () => deleteDj(dj.username));
+
       row.appendChild(name);
       row.appendChild(pill);
       row.appendChild(slot);
       row.appendChild(spacer);
       row.appendChild(toggle);
+      row.appendChild(del);
 
       if (rosterError && rosterError.username === dj.username) {
         const err = document.createElement("div");
@@ -561,6 +567,20 @@
         const body = await resp.json().catch(() => ({}));
         rosterError = { username, message: body.detail || "Kein freier Slot verfügbar." };
       }
+    } catch (e) {
+      // handled via authedFetch (401) or network error; nothing else to do
+    }
+    fetchRoster();
+  }
+
+  async function deleteDj(username) {
+    if (!window.confirm(`${username} wirklich löschen? Der Stream-Key wird ungültig; ` +
+      "eine erneute Anmeldung landet wieder in der Freischaltungs-Warteschlange.")) {
+      return;
+    }
+    rosterError = null;
+    try {
+      await authedFetch(`/api/djs/${encodeURIComponent(username)}`, { method: "DELETE" });
     } catch (e) {
       // handled via authedFetch (401) or network error; nothing else to do
     }

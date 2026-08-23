@@ -207,6 +207,19 @@ class Database:
             conn.commit()
             return free_slot
 
+    def delete_dj(self, username: str) -> bool:
+        """Remove a DJ's row entirely, freeing their username/slot.
+
+        Not just "not ready" -- this drops their password too, so a stale
+        stream key stops working. Revisiting the DJ dashboard afterwards
+        self-registers them again from scratch (see get_or_create_dj), now
+        unapproved.
+        """
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM djs WHERE username = ?", (username,))
+            conn.commit()
+            return cur.rowcount > 0
+
     # -- eventlog -----------------------------------------------------------
 
     def log_event(self, message: str) -> None:

@@ -565,6 +565,23 @@ async def set_dj_ready(username: str, body: ReadyRequest, request: Request) -> d
     return {"username": username, "ready": body.ready, "slot": slot}
 
 
+@app.delete("/api/djs/{username}")
+async def delete_dj(username: str, request: Request) -> dict:
+    require_admin(request)
+    if app.state.db.get_dj(username) is None:
+        raise HTTPException(status_code=404, detail="unknown dj")
+    # Same slot_occupants cleanup as revoking (set_dj_ready's `not ready`
+    # branch above) -- an already-open encoder connection isn't kicked by
+    # this call, but it should stop translating to this username.
+    app.state.slot_occupants = {
+        s: u for s, u in app.state.slot_occupants.items() if u != username
+    }
+    app.state.db.delete_dj(username)
+    app.state.db.log_event(f"{username} gelöscht")
+    await manager.broadcast()
+    return {"username": username, "deleted": True}
+
+
 @app.websocket("/ws")
 async def ws_admin(websocket: WebSocket) -> None:
     username = _ws_identity(websocket)
