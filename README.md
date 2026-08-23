@@ -19,7 +19,7 @@ manual steps as possible.
 ## Setup
 
 1. **Import as a Docker Compose resource.** In Coolify, add a new resource,
-   point it at this repository, and let it detect `docker-compose.yml`.
+   point it at this repository, and let it detect `docker-compose.yaml`.
 
 2. **Configure secrets.** Copy `.env.example` to `.env` and fill in real
    values - passwords, the shared internal secret, the admin token, and
