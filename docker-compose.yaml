@@ -4,8 +4,13 @@ services:
     restart: unless-stopped
     environment:
       ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
-    volumes:
-      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    # No volume mount for mediamtx.yml on purpose: mediamtx/Dockerfile
+    # already COPYs it into the image at build time, and Coolify rebuilds
+    # the image fresh on every deploy anyway. A relative-path single-file
+    # bind mount here actively breaks on Coolify - it auto-provisions any
+    # host path it sees under `volumes:` as a *directory* for persistent
+    # storage (works fine for ./data:/data below, but Docker then refuses
+    # to bind a directory onto a file inside the container).
     ports:
       # RTMP publish (DJs) and RTSP read (the LJ machine's OBS) must bypass
       # Traefik entirely, same reasoning the old harbor ports had: neither
