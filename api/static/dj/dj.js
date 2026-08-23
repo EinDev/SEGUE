@@ -177,6 +177,8 @@
     document.getElementById("cred-user").dataset.raw = creds.user || "";
     renderPasswordField();
     document.getElementById("cred-format-hint").textContent = creds.format_hint || "";
+    const slashHint = document.getElementById("cred-mount-slash-hint");
+    if (slashHint) slashHint.textContent = creds.mount || "";
   }
 
   function renderPasswordField() {

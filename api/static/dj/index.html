@@ -150,6 +150,45 @@
     font-style: italic;
   }
 
+  /* --- How to connect --- */
+  .howto-intro {
+    color: var(--text-dim);
+    margin-top: -0.2em;
+    margin-bottom: 0.9em;
+  }
+  .howto-app {
+    background: var(--bg-raised-2);
+    border-radius: var(--radius);
+    padding: 0.7em 1em;
+    margin-bottom: 0.6em;
+  }
+  .howto-app:last-of-type { margin-bottom: 0; }
+  .howto-app summary {
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 1.05em;
+    padding: 0.2em 0;
+  }
+  .howto-app[open] summary { margin-bottom: 0.5em; }
+  .howto-app ol {
+    margin: 0;
+    padding-left: 1.3em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+  }
+  .howto-note {
+    margin-top: 0.9em;
+    color: var(--text-faint);
+    font-size: 0.9em;
+  }
+  .howto-note code {
+    font-family: var(--font-mono);
+    background: var(--bg-raised-2);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+  }
+
   #app.hidden { display: none; }
 
   #pending-app {
@@ -215,6 +254,63 @@
       <button class="cred-copy-btn" data-copy-target="cred-password" data-copy-raw="password">Kopieren</button>
     </div>
     <div class="format-hint" id="cred-format-hint"></div>
+  </div>
+
+  <div class="card" id="howto">
+    <h2>Verbinden mit deiner Software</h2>
+    <p class="howto-intro">
+      Trag die Zugangsdaten oben (Host, Port, Mount, User, Passwort) in deine
+      Encoder-Software ein - am besten per "Kopieren"-Button, um Tippfehler
+      zu vermeiden. Server-Typ ist immer <strong>Icecast</strong>.
+      Am wichtigsten: teste die Verbindung <em>vor</em> dem Event einmal kurz,
+      nicht erst wenn du gleich dran bist.
+    </p>
+
+    <details class="howto-app">
+      <summary>BUTT (Broadcast Using This Tool)</summary>
+      <ol>
+        <li>Zahnrad-Symbol → <strong>Settings</strong> → Reiter <strong>Main</strong>.</li>
+        <li>Unter "Server Settings": <strong>Type</strong> = Icecast,
+          <strong>Address</strong> = Host, <strong>Port</strong> = Port.</li>
+        <li><strong>Password</strong> = Passwort, <strong>Mountpoint</strong> = Mount,
+          <strong>Login</strong> = User (falls das Feld fehlt: BUTT aktualisieren,
+          ältere Versionen unterstützen keinen eigenen Login-Namen).</li>
+        <li>Reiter <strong>Audio</strong>: Format wie oben empfohlen einstellen.</li>
+        <li>Fenster schließen, dann auf <strong>Play</strong> klicken um zu senden.</li>
+      </ol>
+    </details>
+
+    <details class="howto-app">
+      <summary>Mixxx</summary>
+      <ol>
+        <li><strong>Optionen</strong> → <strong>Einstellungen</strong> →
+          <strong>Live-Broadcasting</strong>.</li>
+        <li>Verbindung aktivieren, <strong>Server-Typ: Icecast 2</strong>.</li>
+        <li>Host, Port, Mount, Login (User) und Passwort wie oben eintragen.</li>
+        <li>Format wie oben empfohlen wählen (Mixxx sendet ohne LAME-Plugin
+          standardmäßig Ogg Vorbis statt MP3 - beides ist bei uns in Ordnung).</li>
+        <li>Einstellungen speichern, dann im Broadcast-Panel auf
+          <strong>on air</strong> schalten.</li>
+      </ol>
+    </details>
+
+    <details class="howto-app">
+      <summary>VirtualDJ</summary>
+      <ol>
+        <li>Broadcast-Ansicht öffnen (<strong>Broadcast</strong>-Tab bzw. -Plugin).</li>
+        <li>Server-Typ <strong>Icecast</strong> wählen.</li>
+        <li>Host, Port, Mount, User und Passwort wie oben eintragen.</li>
+        <li>Encoder wie oben empfohlen einstellen.</li>
+        <li>Auf <strong>Start Broadcast</strong> klicken.</li>
+      </ol>
+    </details>
+
+    <p class="howto-note">
+      Andere Software mit Icecast-2-Quellunterstützung funktioniert genauso -
+      die vier Felder Host/Port/Mount/Login/Passwort heißen praktisch überall
+      ähnlich. Falls dein Programm nur ein einzelnes "Mount"-Feld mit
+      führendem <code>/</code> erwartet, probier <code>/<span id="cred-mount-slash-hint">…</span></code>.
+    </p>
   </div>
 
   <div class="card" id="conn-quality">
