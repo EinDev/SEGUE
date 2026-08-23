@@ -228,88 +228,47 @@
   <div class="card" id="credentials">
     <h2>Deine Zugangsdaten</h2>
     <div class="cred-row">
-      <div class="cred-label">Host</div>
-      <div class="cred-value" id="cred-host">—</div>
-      <button class="cred-copy-btn" data-copy-target="cred-host">Kopieren</button>
+      <div class="cred-label">Server</div>
+      <div class="cred-value" id="cred-rtmp-server">—</div>
+      <button class="cred-copy-btn" data-copy-target="cred-rtmp-server">Kopieren</button>
     </div>
     <div class="cred-row">
-      <div class="cred-label">Port</div>
-      <div class="cred-value" id="cred-port">—</div>
-      <button class="cred-copy-btn" data-copy-target="cred-port">Kopieren</button>
-    </div>
-    <div class="cred-row">
-      <div class="cred-label">Mount</div>
-      <div class="cred-value" id="cred-mount">—</div>
-      <button class="cred-copy-btn" data-copy-target="cred-mount">Kopieren</button>
-    </div>
-    <div class="cred-row">
-      <div class="cred-label">User</div>
-      <div class="cred-value" id="cred-user">—</div>
-      <button class="cred-copy-btn" data-copy-target="cred-user">Kopieren</button>
-    </div>
-    <div class="cred-row">
-      <div class="cred-label">Passwort</div>
-      <div class="cred-value" id="cred-password">•••••••</div>
-      <button class="cred-toggle-btn" id="cred-password-toggle">Anzeigen</button>
-      <button class="cred-copy-btn" data-copy-target="cred-password" data-copy-raw="password">Kopieren</button>
+      <div class="cred-label">Stream-Key</div>
+      <div class="cred-value" id="cred-stream-key">•••••••</div>
+      <button class="cred-toggle-btn" id="cred-stream-key-toggle">Anzeigen</button>
+      <button class="cred-copy-btn" data-copy-target="cred-stream-key" data-copy-raw="password">Kopieren</button>
     </div>
     <div class="format-hint" id="cred-format-hint"></div>
   </div>
 
   <div class="card" id="howto">
-    <h2>Verbinden mit deiner Software</h2>
+    <h2>Verbinden mit OBS</h2>
     <p class="howto-intro">
-      Trag die Zugangsdaten oben (Host, Port, Mount, User, Passwort) in deine
-      Encoder-Software ein - am besten per "Kopieren"-Button, um Tippfehler
-      zu vermeiden. Server-Typ ist immer <strong>Icecast</strong>.
+      Trag die Zugangsdaten oben (Server, Stream-Key) in OBS ein - am besten
+      per "Kopieren"-Button, um Tippfehler zu vermeiden.
       Am wichtigsten: teste die Verbindung <em>vor</em> dem Event einmal kurz,
       nicht erst wenn du gleich dran bist.
     </p>
 
-    <details class="howto-app">
-      <summary>BUTT (Broadcast Using This Tool)</summary>
+    <details class="howto-app" open>
+      <summary>OBS Studio</summary>
       <ol>
-        <li>Zahnrad-Symbol → <strong>Settings</strong> → Reiter <strong>Main</strong>.</li>
-        <li>Unter "Server Settings": <strong>Type</strong> = Icecast,
-          <strong>Address</strong> = Host, <strong>Port</strong> = Port.</li>
-        <li><strong>Password</strong> = Passwort, <strong>Mountpoint</strong> = Mount,
-          <strong>Login</strong> = User (falls das Feld fehlt: BUTT aktualisieren,
-          ältere Versionen unterstützen keinen eigenen Login-Namen).</li>
-        <li>Reiter <strong>Audio</strong>: Format wie oben empfohlen einstellen.</li>
-        <li>Fenster schließen, dann auf <strong>Play</strong> klicken um zu senden.</li>
-      </ol>
-    </details>
-
-    <details class="howto-app">
-      <summary>Mixxx</summary>
-      <ol>
-        <li><strong>Optionen</strong> → <strong>Einstellungen</strong> →
-          <strong>Live-Broadcasting</strong>.</li>
-        <li>Verbindung aktivieren, <strong>Server-Typ: Icecast 2</strong>.</li>
-        <li>Host, Port, Mount, Login (User) und Passwort wie oben eintragen.</li>
-        <li>Format wie oben empfohlen wählen (Mixxx sendet ohne LAME-Plugin
-          standardmäßig Ogg Vorbis statt MP3 - beides ist bei uns in Ordnung).</li>
-        <li>Einstellungen speichern, dann im Broadcast-Panel auf
-          <strong>on air</strong> schalten.</li>
-      </ol>
-    </details>
-
-    <details class="howto-app">
-      <summary>VirtualDJ</summary>
-      <ol>
-        <li>Broadcast-Ansicht öffnen (<strong>Broadcast</strong>-Tab bzw. -Plugin).</li>
-        <li>Server-Typ <strong>Icecast</strong> wählen.</li>
-        <li>Host, Port, Mount, User und Passwort wie oben eintragen.</li>
-        <li>Encoder wie oben empfohlen einstellen.</li>
-        <li>Auf <strong>Start Broadcast</strong> klicken.</li>
+        <li><strong>Einstellungen</strong> → <strong>Stream</strong>.</li>
+        <li><strong>Dienst</strong>: <em>Benutzerdefiniert...</em> auswählen.</li>
+        <li><strong>Server</strong> = der Server-Wert oben, <strong>Stream-Key</strong>
+          = der Stream-Key-Wert oben (auf "Anzeigen" klicken, dann kopieren).</li>
+        <li><strong>Ausgabe</strong>-Reiter: Video-Encoder H.264 (x264 oder ein
+          Hardware-Encoder), Audio-Encoder AAC - beides ist OBS' Standard, hier
+          muss meist nichts geändert werden.</li>
+        <li>Übernehmen, dann im Hauptfenster auf
+          <strong>Streaming starten</strong> klicken.</li>
       </ol>
     </details>
 
     <p class="howto-note">
-      Andere Software mit Icecast-2-Quellunterstützung funktioniert genauso -
-      die vier Felder Host/Port/Mount/Login/Passwort heißen praktisch überall
-      ähnlich. Falls dein Programm nur ein einzelnes "Mount"-Feld mit
-      führendem <code>/</code> erwartet, probier <code>/<span id="cred-mount-slash-hint">…</span></code>.
+      Andere Software mit generischem RTMP-Push funktioniert genauso - Server
+      und Stream-Key heißen dort oft "URL" bzw. "Key"/"Pfad". Solange sie
+      H.264-Video und AAC-Audio per RTMP senden kann, passt sie.
     </p>
   </div>
 

@@ -66,9 +66,16 @@ apiAddress: :9997
 # endpoint's protection is the same as the old telnet port's: never
 # published to the host, reachable only from other containers on this
 # compose network.
+#
+# authHTTPExclude takes a list of permission objects (same shape as
+# MediaMTX's internal-auth user permissions), NOT bare action-name strings
+# - `authHTTPExclude: [api]` fails to parse (confirmed against the pinned
+# image locally: "json: cannot unmarshal string into Go value of type
+# map[string]json.RawMessage").
 authMethod: http
 authHTTPAddress: http://api:8080/internal/mediamtx/auth
-authHTTPExclude: [api]
+authHTTPExclude:
+  - action: api
 
 paths:
   # Matches slot1..slotN for any ONAIR_MAX_DJS - see the file header for why

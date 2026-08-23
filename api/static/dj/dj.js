@@ -162,29 +162,21 @@
     }
   }
 
-  let passwordRevealed = false;
+  let streamKeyRevealed = false;
 
   function renderCredentials(creds) {
     if (!creds) return;
-    setText("cred-host", creds.host);
-    setText("cred-port", creds.port);
-    setText("cred-mount", creds.mount);
-    setText("cred-user", creds.user);
-    document.getElementById("cred-password").dataset.raw = creds.password || "";
-    document.getElementById("cred-host").dataset.raw = creds.host || "";
-    document.getElementById("cred-port").dataset.raw = String(creds.port != null ? creds.port : "");
-    document.getElementById("cred-mount").dataset.raw = creds.mount || "";
-    document.getElementById("cred-user").dataset.raw = creds.user || "";
-    renderPasswordField();
+    setText("cred-rtmp-server", creds.rtmp_server);
+    document.getElementById("cred-rtmp-server").dataset.raw = creds.rtmp_server || "";
+    document.getElementById("cred-stream-key").dataset.raw = creds.stream_key || "";
+    renderStreamKeyField();
     document.getElementById("cred-format-hint").textContent = creds.format_hint || "";
-    const slashHint = document.getElementById("cred-mount-slash-hint");
-    if (slashHint) slashHint.textContent = creds.mount || "";
   }
 
-  function renderPasswordField() {
-    const el = document.getElementById("cred-password");
+  function renderStreamKeyField() {
+    const el = document.getElementById("cred-stream-key");
     const raw = el.dataset.raw || "";
-    el.textContent = passwordRevealed ? raw : "•".repeat(Math.max(5, raw.length || 5));
+    el.textContent = streamKeyRevealed ? raw : "•".repeat(Math.max(5, raw.length || 5));
   }
 
   function setText(id, value) {
