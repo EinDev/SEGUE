@@ -12,8 +12,8 @@ directory's README for the OBS-side "Close file when inactive" setting
 that visibility-toggling depends on).
 
 Two independent reconnect-with-backoff loops run concurrently:
-  - api_ws_loop: holds /ws/lj open, falling back to HTTP polling of
-    /api/lj/state while it's down. Mirrors the exact backoff (1s -> 15s
+  - api_ws_loop: holds /public/ws/lj open, falling back to HTTP polling
+    of /public/api/lj/state while it's down. Mirrors the exact backoff (1s -> 15s
     cap) + poll-fallback idiom already used by api/static/dj/dj.js and
     api/static/admin/admin.js against the same api service.
   - obs_loop: holds an obs-websocket connection open, with its own
@@ -57,15 +57,22 @@ def load_config(path: Path) -> dict:
 
 
 def _ws_url(api_base_url: str) -> str:
+    # /public/... - the Authentik forward-auth middleware sits in front of
+    # this whole domain (see README), and a bare script has no
+    # browser/Authentik session to satisfy it with. /public is this
+    # deployment's existing convention for routes that authenticate
+    # themselves independently (here: the X-Onair-Lj-Token header) and
+    # need to bypass that middleware entirely rather than be challenged
+    # by it.
     if api_base_url.startswith("https://"):
-        return "wss://" + api_base_url[len("https://"):].rstrip("/") + "/ws/lj"
+        return "wss://" + api_base_url[len("https://"):].rstrip("/") + "/public/ws/lj"
     if api_base_url.startswith("http://"):
-        return "ws://" + api_base_url[len("http://"):].rstrip("/") + "/ws/lj"
+        return "ws://" + api_base_url[len("http://"):].rstrip("/") + "/public/ws/lj"
     raise ValueError(f"api_base_url must start with http:// or https://: {api_base_url!r}")
 
 
 def _state_url(api_base_url: str) -> str:
-    return api_base_url.rstrip("/") + "/api/lj/state"
+    return api_base_url.rstrip("/") + "/public/api/lj/state"
 
 
 class LjController:
@@ -205,7 +212,7 @@ class LjController:
             backoff = min(backoff * 2, WS_BACKOFF_MAX)
 
     async def _poll_fallback(self) -> None:
-        """Runs only while /ws/lj is down (cancelled the instant it
+        """Runs only while /public/ws/lj is down (cancelled the instant it
         (re)connects) -- keeps OBS roughly in sync via plain HTTP polling
         during a longer api outage, the same WS-down-so-poll idiom
         dj.js/admin.js use against this same api service."""

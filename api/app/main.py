@@ -714,13 +714,24 @@ def _lj_state() -> dict:
     }
 
 
-@app.get("/api/lj/state")
+# Both LJ routes live under /public - the Authentik forward-auth
+# middleware is attached at the domain level (see README), so anything
+# not under this prefix gets intercepted and redirected into an OAuth
+# login flow before it ever reaches this app. The LJ controller is a bare
+# script with no browser/Authentik session and no way to complete that
+# flow - it authenticates with its own independent secret
+# (ONAIR_LJ_TOKEN, checked below) instead, which is exactly the kind of
+# route /public is meant to exempt. Confirmed broken without this prefix:
+# a real LJ controller's connection got redirected to
+# https://auth.<domain>/application/o/authorize/... and the underlying
+# websocket client correctly refused to follow a non-ws(s) redirect.
+@app.get("/public/api/lj/state")
 async def lj_state(request: Request) -> dict:
     require_lj(request)
     return _lj_state()
 
 
-@app.websocket("/ws/lj")
+@app.websocket("/public/ws/lj")
 async def ws_lj(websocket: WebSocket) -> None:
     token = websocket.headers.get("X-Onair-Lj-Token", "")
     if not secrets.compare_digest(token, app.state.lj_token):

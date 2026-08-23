@@ -108,6 +108,20 @@ longer requires restarting the media relay, only `api`, see `.env.example`).
    change `ONAIR_AUTH_USERNAME_HEADER` in `.env` to match whatever header
    your setup actually uses.
 
+   **Exempt `/public/*` from that same middleware.** The `lj-controller`
+   (see its own README) is a bare script with no browser/Authentik
+   session - it authenticates with its own independent secret
+   (`ONAIR_LJ_TOKEN`) on `/public/api/lj/state` and `/public/ws/lj`
+   instead, and needs those two routes to bypass Authentik entirely rather
+   than get redirected into an OAuth login flow it has no way to complete.
+   How you configure this depends on your Authentik/Traefik setup - e.g.
+   an "unauthenticated paths" regex on the Provider backing this outpost,
+   or a separate higher-priority Traefik router for the `/public` prefix
+   with no middleware attached. This isn't something `docker-compose.yaml`
+   can do on its own; without it, the LJ controller cannot connect at all
+   (confirmed: its connection gets redirected to Authentik's login URL
+   instead of getting a WebSocket response).
+
 4. **Deploy.**
 
 5. **Open the firewall for ports 1935 and 8554.** These bypass Coolify's
@@ -175,7 +189,10 @@ likely operator mistakes on Coolify specifically:
   last on air instead of updating - check `lj_token` in
   `lj-controller/config.yaml` matches `ONAIR_LJ_TOKEN`, and that the LJ
   machine's network can actually reach `api_base_url` (firewall, VPN,
-  whatever's between the venue and the server).
+  whatever's between the venue and the server). If the controller's log
+  shows it getting redirected to an Authentik login URL instead of
+  connecting, `/public/*` isn't actually exempted from the forward-auth
+  middleware on your Traefik/Authentik setup - see step 3 above.
 
 - **The LJ controller can't reach OBS.** Same frozen-state symptom; check
   `obs_ws_url`/`obs_ws_password` in `config.yaml` against OBS's Tools ->

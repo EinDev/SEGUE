@@ -25,7 +25,7 @@ or if you're setting this up by hand for any reason.
 1. **OBS**: create one scene (its name goes in `config.yaml`'s `scene_name`,
    e.g. `"Live"`). Add one Media Source per DJ slot, each pointed at that
    slot's RTSP URL (`rtsp://<read-user>:<read-pass>@<host>:<port>/slotN` -
-   the api's `/api/lj/state` response gives you these ready-made per
+   the api's `/public/api/lj/state` response gives you these ready-made per
    connected DJ, no need to construct them by hand), plus one more source
    for a standby/filler scene (a looping video, a static "off air" image,
    whatever you want shown when nobody is on air).

@@ -69,7 +69,7 @@ mediamtx ── HTTP-Auth + HTTP-Webhook (connect/disconnect) ──► api (Fas
                                                                  │
                             ┌────────────────────────────────────┼──────────────────┐
                             ▼                                    ▼                  ▼
-                     WebSocket /ws/lj                     WebSocket /ws       WebSocket /ws/dj
+                  WebSocket /public/ws/lj                 WebSocket /ws       WebSocket /ws/dj
                      lj-controller (Python,                Admin-View            DJ-Views
                      läuft beim Operator,
                      steuert OBS per
@@ -134,8 +134,8 @@ api-Image mitkopiert wird. Aber kein separater Node-Container zur Laufzeit.
 
 - Kein Teil des Compose-Stacks - läuft eigenständig auf dem Rechner des
   Event-Operators, neben dessen OBS.
-- Python-Asyncio-Skript: hält `/ws/lj` offen (Fallback auf HTTP-Polling von
-  `/api/lj/state`), spiegelt den empfangenen `on_air`-Wert per
+- Python-Asyncio-Skript: hält `/public/ws/lj` offen (Fallback auf
+  HTTP-Polling von `/public/api/lj/state`), spiegelt den empfangenen `on_air`-Wert per
   `obs-websocket` (Sichtbarkeits-Toggle innerhalb einer festen Szene) ins
   lokale OBS.
 - Details, Setup und die kritische "Close file when inactive"-Einstellung:
@@ -314,13 +314,19 @@ und Verbindungsstatus **aller** DJs, wer on air ist, aktueller Modus. Er enthäl
 ### 6.2a LJ-Sicht (statischer Token, kein Authentik)
 
 ```
-GET    /api/lj/state             → Header X-Onair-Lj-Token, sonst 403
-WS     /ws/lj                    → Header X-Onair-Lj-Token, sonst 403
+GET    /public/api/lj/state      → Header X-Onair-Lj-Token, sonst 403
+WS     /public/ws/lj             → Header X-Onair-Lj-Token, sonst 403
 ```
 
 Für den `lj-controller` (Abschnitt 3.4) - kein Mensch, keine Authentik-Session,
 daher ein statisches geteiltes Token (`ONAIR_LJ_TOKEN`) statt des
-Proxy-Headers. Antwortform wie der volle Zustand, plus pro bereitem DJ `slot`
+Proxy-Headers. **Müssen** unter `/public` liegen: die Authentik-Forward-Auth-
+Middleware sitzt vor der gesamten Domain (README, Setup-Schritt 3), fängt also
+auch diese Routen ab, wenn sie nicht unter dem Pfad liegen, den dieses
+Deployment dafür vorsieht - ein Skript ohne Browser/Session kann den daraus resultierenden
+OAuth-Redirect nicht durchlaufen. Bestätigt kaputt ohne dieses Präfix (echter
+`lj-controller` erhielt einen Redirect auf die Authentik-Login-URL statt einer
+WebSocket-Antwort). Antwortform wie der volle Zustand, plus pro bereitem DJ `slot`
 und eine serverseitig fertig zusammengesetzte `rtsp_url`
 (`rtsp://<ljread-user>:<ljread-pass>@<host>:<port>/<slot>`) - der Controller
 konstruiert diese URL nie selbst.
