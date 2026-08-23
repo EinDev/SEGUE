@@ -561,6 +561,7 @@ async def set_dj_ready(username: str, body: ReadyRequest, request: Request) -> d
     app.state.db.log_event(
         f"{username} freigeschaltet (Slot {slot})" if body.ready else f"{username} deaktiviert"
     )
+    await manager.broadcast()
     return {"username": username, "ready": body.ready, "slot": slot}
 
 
