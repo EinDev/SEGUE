@@ -25,6 +25,18 @@
   const rosterRowsEl = document.getElementById("roster-rows");
   const eventlogEl = document.getElementById("eventlog");
 
+  const diagCpuEl = document.getElementById("diag-cpu");
+  const diagRamEl = document.getElementById("diag-ram");
+  const diagDiskEl = document.getElementById("diag-disk");
+  const diagNetEl = document.getElementById("diag-net");
+  const diagUptimeEl = document.getElementById("diag-uptime");
+  const diagMediamtxPillEl = document.getElementById("diag-mediamtx-pill");
+  const diagLjPillEl = document.getElementById("diag-lj-pill");
+  const diagLjLastSeenEl = document.getElementById("diag-lj-lastseen");
+  const diagLjObsPillEl = document.getElementById("diag-lj-obs-pill");
+  const diagLjSourceEl = document.getElementById("diag-lj-source");
+  const diagErrorsEl = document.getElementById("diag-errors");
+
   let authorized = false;
   let rosterError = null; // { username, message } shown inline on that row
   let rosterByUsername = {}; // username -> {username, ready, slot, connected, created_at}
@@ -100,6 +112,7 @@
       clearInterval(clockTimer);
       clockTimer = null;
     }
+    stopDiagnosticsPolling();
     setConnLost(false);
     appEl.classList.add("hidden");
     deniedEl.classList.remove("hidden");
@@ -120,6 +133,7 @@
     if (!clockTimer) {
       clockTimer = setInterval(tickClock, 1000);
     }
+    startDiagnosticsPolling();
   }
 
   // ---- Static admin-only info (RTMP server address) - fetched once, not
@@ -619,6 +633,20 @@
 
   // ---- Eventlog ----
 
+  function buildLogRow(entry) {
+    const row = document.createElement("div");
+    row.className = "log-row" + (entry.level && entry.level !== "info" ? ` log-row-${entry.level}` : "");
+    const ts = document.createElement("span");
+    ts.className = "log-ts";
+    ts.textContent = formatLogTs(entry.ts);
+    const msg = document.createElement("span");
+    msg.className = "log-msg";
+    msg.textContent = entry.message;
+    row.appendChild(ts);
+    row.appendChild(msg);
+    return row;
+  }
+
   function renderLog(entries) {
     eventlogEl.innerHTML = "";
     if (!entries || entries.length === 0) {
@@ -629,16 +657,164 @@
       return;
     }
     for (const entry of entries) {
+      eventlogEl.appendChild(buildLogRow(entry));
+    }
+  }
+
+  // ---- Diagnose: system stats (CPU/RAM/Disk/Netzwerk), MediaMTX/LJ
+  // connection health, and a compact error/warning feed. Own poll
+  // interval matching the server's HISTORY_SAMPLE_INTERVAL_SECONDS (5s,
+  // see api/app/main.py) so the sparkline charts get evenly-spaced
+  // samples - same reasoning as the per-DJ detail stats polling above.
+  // Runs continuously while authorized, unlike the per-DJ polling (this
+  // card has no expand/collapse state to gate it on).
+
+  const DIAG_POLL_INTERVAL_MS = 5000;
+  let diagTimer = null;
+
+  function startDiagnosticsPolling() {
+    if (diagTimer) return;
+    const tick = () => {
+      fetchDiagnostics();
+      fetchErrors();
+    };
+    tick();
+    diagTimer = setInterval(tick, DIAG_POLL_INTERVAL_MS);
+  }
+
+  function stopDiagnosticsPolling() {
+    if (diagTimer) {
+      clearInterval(diagTimer);
+      diagTimer = null;
+    }
+  }
+
+  async function fetchDiagnostics() {
+    let resp;
+    try {
+      resp = await authedFetch("/api/admin/system");
+    } catch (e) {
+      return;
+    }
+    let data = null;
+    try {
+      data = await resp.json();
+    } catch (e) {
+      return;
+    }
+    renderDiagnostics(data);
+  }
+
+  function formatPercent(v) {
+    return v == null ? "—" : `${v.toFixed(1)} %`;
+  }
+
+  function formatMbps(v) {
+    return v == null ? "—" : `${v.toFixed(2)} MB/s`;
+  }
+
+  function formatUptime(seconds) {
+    if (seconds == null) return "—";
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    const s = Math.floor(seconds % 60);
+    return `${m}m ${s}s`;
+  }
+
+  function formatAgo(iso) {
+    if (!iso) return "";
+    const ms = Date.now() - new Date(iso).getTime();
+    if (!Number.isFinite(ms) || ms < 0) return "";
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `vor ${s}s`;
+    return `vor ${Math.round(s / 60)}min`;
+  }
+
+  function setPill(el, ok, textOk, textBad, badClass) {
+    el.className = "pill " + (ok ? "pill-connected" : badClass || "pill-disconnected");
+    el.textContent = ok ? textOk : textBad;
+  }
+
+  function renderDiagnostics(data) {
+    if (!data) return;
+    const sys = data.system;
+    diagCpuEl.textContent = sys ? formatPercent(sys.cpu_percent) : "—";
+    diagRamEl.textContent = sys ? formatPercent(sys.memory_percent) : "—";
+    diagDiskEl.textContent = sys ? formatPercent(sys.disk_percent) : "—";
+    diagNetEl.textContent = sys ? formatMbps(sys.network_mbps) : "—";
+    diagUptimeEl.textContent = sys ? formatUptime(sys.uptime_seconds) : "—";
+
+    // MediaMTX being unreachable is a real problem (nothing can go on
+    // air), so it gets the red "error" pill rather than the neutral grey
+    // used for e.g. "DJ not currently connected" elsewhere on this page.
+    setPill(diagMediamtxPillEl, !!data.mediamtx_alive, "erreichbar", "nicht erreichbar", "pill-error");
+
+    const lj = data.lj || {};
+    // The LJ controller only runs during an actual event, so "not
+    // connected" is the expected idle state most of the time -- amber,
+    // not red.
+    setPill(diagLjPillEl, !!lj.connected, "verbunden", "nicht verbunden", "pill-warning");
+    diagLjLastSeenEl.textContent = lj.last_seen
+      ? `zuletzt gesehen ${formatAgo(lj.last_seen)}`
+      : "noch nie gesehen";
+
+    if (lj.obs_connected == null) {
+      diagLjObsPillEl.classList.add("hidden");
+    } else {
+      diagLjObsPillEl.classList.remove("hidden");
+      setPill(diagLjObsPillEl, lj.obs_connected, "OBS verbunden", "OBS getrennt", "pill-warning");
+    }
+    diagLjSourceEl.textContent = lj.last_applied ? `Quelle: ${lj.last_applied}` : "";
+
+    const history = data.history || [];
+    window.SegueChart.renderSparkline(
+      document.querySelector('[data-diag-chart="cpu"]'),
+      document.querySelector('[data-diag-chart-caption="cpu"]'),
+      window.SegueChart.toSeries(history, "cpu_percent"),
+      { unit: " %", decimals: 1, colorClass: "chart-line--cpu" }
+    );
+    window.SegueChart.renderSparkline(
+      document.querySelector('[data-diag-chart="ram"]'),
+      document.querySelector('[data-diag-chart-caption="ram"]'),
+      window.SegueChart.toSeries(history, "memory_percent"),
+      { unit: " %", decimals: 1, colorClass: "chart-line--ram" }
+    );
+    window.SegueChart.renderSparkline(
+      document.querySelector('[data-diag-chart="net"]'),
+      document.querySelector('[data-diag-chart-caption="net"]'),
+      window.SegueChart.toSeries(history, "network_mbps"),
+      { unit: " MB/s", decimals: 2, colorClass: "chart-line--network" }
+    );
+  }
+
+  async function fetchErrors() {
+    let resp;
+    try {
+      resp = await authedFetch("/api/admin/errors?limit=20");
+    } catch (e) {
+      return;
+    }
+    let entries = null;
+    try {
+      entries = await resp.json();
+    } catch (e) {
+      return;
+    }
+    renderErrors(entries);
+  }
+
+  function renderErrors(entries) {
+    diagErrorsEl.innerHTML = "";
+    if (!entries || entries.length === 0) {
       const row = document.createElement("div");
-      row.className = "log-row";
-      const ts = document.createElement("span");
-      ts.className = "log-ts";
-      ts.textContent = formatLogTs(entry.ts);
-      const msg = document.createElement("span");
-      msg.textContent = entry.message;
-      row.appendChild(ts);
-      row.appendChild(msg);
-      eventlogEl.appendChild(row);
+      row.className = "text-faint";
+      row.textContent = "Keine Fehler oder Warnungen.";
+      diagErrorsEl.appendChild(row);
+      return;
+    }
+    for (const entry of entries) {
+      diagErrorsEl.appendChild(buildLogRow(entry));
     }
   }
 

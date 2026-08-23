@@ -334,6 +334,53 @@
     padding: 0.1em 0.4em;
     border-radius: 4px;
   }
+
+  .diag-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8em, 1fr));
+    gap: 0.5em;
+    margin-bottom: 0.6em;
+  }
+  .diag-tile {
+    background: var(--bg-raised-2);
+    border-radius: 6px;
+    padding: 0.4em 0.6em;
+  }
+  .diag-label {
+    color: var(--text-dim);
+    font-size: 0.8em;
+    font-weight: 700;
+  }
+  .diag-value {
+    font-size: 1.1em;
+    font-weight: 800;
+    font-family: var(--font-mono);
+  }
+  .diag-charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14em, 1fr));
+    gap: 0 1.2em;
+  }
+  .diag-lj-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    flex-wrap: wrap;
+    margin-top: 0.7em;
+    padding-top: 0.6em;
+    border-top: 1px solid var(--border);
+  }
+  .diag-lj-row .diag-label { font-size: 0.9em; }
+  #diag-errors {
+    margin-top: 0.4em;
+    display: flex;
+    flex-direction: column;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+  }
+  .log-row-warning .log-msg { color: var(--amber); }
+  .log-row-error .log-msg { color: var(--red); }
+  #diag-lj-obs-pill.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -446,6 +493,66 @@
           das ist um 3 Uhr nachts die schnellste Fehlerquelle.</li>
       </ol>
     </details>
+  </div>
+
+  <div class="card">
+    <h2>Diagnose</h2>
+
+    <div class="diag-grid">
+      <div class="diag-tile">
+        <div class="diag-label">CPU</div>
+        <div class="diag-value" id="diag-cpu">—</div>
+      </div>
+      <div class="diag-tile">
+        <div class="diag-label">RAM</div>
+        <div class="diag-value" id="diag-ram">—</div>
+      </div>
+      <div class="diag-tile">
+        <div class="diag-label">Disk</div>
+        <div class="diag-value" id="diag-disk">—</div>
+      </div>
+      <div class="diag-tile">
+        <div class="diag-label">Netzwerk</div>
+        <div class="diag-value" id="diag-net">—</div>
+      </div>
+      <div class="diag-tile">
+        <div class="diag-label">Laufzeit</div>
+        <div class="diag-value" id="diag-uptime">—</div>
+      </div>
+      <div class="diag-tile">
+        <div class="diag-label">MediaMTX</div>
+        <div class="diag-value"><span class="pill pill-unknown" id="diag-mediamtx-pill">unbekannt</span></div>
+      </div>
+    </div>
+
+    <div class="diag-charts">
+      <div class="chart-block">
+        <div class="chart-block-label">CPU (5 Min.)</div>
+        <div class="chart-svg-wrap" data-diag-chart="cpu"></div>
+        <div class="chart-caption" data-diag-chart-caption="cpu"></div>
+      </div>
+      <div class="chart-block">
+        <div class="chart-block-label">RAM (5 Min.)</div>
+        <div class="chart-svg-wrap" data-diag-chart="ram"></div>
+        <div class="chart-caption" data-diag-chart-caption="ram"></div>
+      </div>
+      <div class="chart-block">
+        <div class="chart-block-label">Netzwerk (5 Min.)</div>
+        <div class="chart-svg-wrap" data-diag-chart="net"></div>
+        <div class="chart-caption" data-diag-chart-caption="net"></div>
+      </div>
+    </div>
+
+    <div class="diag-lj-row">
+      <span class="diag-label">LJ-Controller:</span>
+      <span class="pill pill-unknown" id="diag-lj-pill">unbekannt</span>
+      <span class="text-faint" id="diag-lj-lastseen"></span>
+      <span class="pill pill-unknown hidden" id="diag-lj-obs-pill"></span>
+      <span class="text-faint" id="diag-lj-source"></span>
+    </div>
+
+    <h2 style="margin-top: 0.8em;">Fehler &amp; Warnungen</h2>
+    <div id="diag-errors"></div>
   </div>
 
   <div class="card">

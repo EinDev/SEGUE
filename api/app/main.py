@@ -36,16 +36,18 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import lj_package, mediamtx_client, mediamtx_stats
+from . import lj_package, mediamtx_client, mediamtx_stats, system_stats
 from .db import Database, NoFreeSlotError
 from .state import FILLER, StateManager, iso_z
 
 # Server-side rolling history for the admin/DJ stats charts (5 min of
-# trend at a glance). Deliberately server-side and shared, not
-# accumulated per-browser-tab: multiple viewers (admin + the DJ
-# themself) see the same backfilled window immediately on open, rather
-# than each starting from an empty chart. The tradeoff is explicit and
-# accepted: this runs continuously for every currently-connected slot
+# trend at a glance) -- per-slot bitrate/delay (app.state.stat_history)
+# and, since the Diagnose panel, this container's own CPU/RAM/disk/
+# network (app.state.system_history, see system_stats.py). Deliberately
+# server-side and shared, not accumulated per-browser-tab: multiple
+# viewers (admin + the DJ themself) see the same backfilled window
+# immediately on open, rather than each starting from an empty chart.
+# The tradeoff is explicit and accepted: this runs continuously
 # regardless of whether anyone has a panel open, unlike every other
 # per-slot stats call in this file (those are on-demand,
 # request-triggered only).
@@ -184,6 +186,10 @@ async def on_startup() -> None:
     app.state.log_debounce = {}
     app.state.slot_occupants = {}  # slot -> username, populated on publish auth
     app.state.stat_history = {}  # slot -> deque[{"ts", "bitrate_kbps", "delay_seconds"}]
+    app.state.system_history = deque(maxlen=HISTORY_WINDOW_SAMPLES)
+    app.state.net_prev = None  # (monotonic_time, cumulative_bytes), see system_stats.sample
+    app.state.lj_last_seen = None  # iso timestamp of the last poll/ws activity from the lj-controller
+    app.state.lj_status = {}  # {"obs_connected", "last_applied", "received_at"} pushed by lj-controller
 
     app.state.rtmp_host = _env("ONAIR_RTMP_PUBLIC_HOST", "")
     app.state.rtmp_port = int(os.environ.get("ONAIR_RTMP_PUBLIC_PORT", "1935"))
@@ -196,6 +202,7 @@ async def on_startup() -> None:
 
     debounce_seconds = float(os.environ.get("ONAIR_DEBOUNCE_SECONDS", "2"))
     db_path = os.environ.get("ONAIR_DB_PATH", "/data/onair.db")
+    app.state.db_path = db_path
     mediamtx_host = os.environ.get("ONAIR_MEDIAMTX_HOST", "mediamtx")
     mediamtx_api_port = int(os.environ.get("ONAIR_MEDIAMTX_API_PORT", "9997"))
     mediamtx_hls_port = int(os.environ.get("ONAIR_MEDIAMTX_HLS_PORT", "8888"))
@@ -253,6 +260,17 @@ async def _history_collector_loop() -> None:
     every DJ who has ever connected during the event.
     """
     while True:
+        try:
+            disk_path = os.path.dirname(app.state.db_path) or "/"
+            sys_stats, app.state.net_prev = system_stats.sample(disk_path, app.state.net_prev)
+            app.state.system_history.append(
+                {"ts": iso_z(datetime.now(timezone.utc)), **sys_stats}
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - this loop must never die
+            logger.exception("system stats sample failed")
+
         try:
             connected_usernames = set(app.state.state_manager.connected_since)
             slots_in_use: Set[str] = set()
@@ -351,6 +369,37 @@ async def admin_info(request: Request) -> dict:
     return {"rtmp_server": f"rtmp://{app.state.rtmp_host}:{app.state.rtmp_port}"}
 
 
+@app.get("/api/admin/system")
+async def admin_system(request: Request) -> dict:
+    """System/service health for the admin Diagnose panel: this
+    container's CPU/RAM/disk/network, whether MediaMTX's control API is
+    currently reachable, and the lj-controller's last-known connection
+    state (see ws_lj/lj_state below for how lj_last_seen/lj_status get
+    populated -- the lj-controller itself may be an old build that never
+    sends a status payload, in which case obs_connected/last_applied
+    simply stay None rather than erroring)."""
+    require_admin(request)
+    lj_status = app.state.lj_status
+    status_age_seconds = None
+    received_at = lj_status.get("received_at")
+    if received_at:
+        status_age_seconds = (
+            datetime.now(timezone.utc) - datetime.fromisoformat(received_at.replace("Z", "+00:00"))
+        ).total_seconds()
+    return {
+        "system": app.state.system_history[-1] if app.state.system_history else None,
+        "history": list(app.state.system_history),
+        "mediamtx_alive": app.state.state_manager.media_alive,
+        "lj": {
+            "connected": len(manager.lj_sockets) > 0,
+            "last_seen": app.state.lj_last_seen,
+            "obs_connected": lj_status.get("obs_connected"),
+            "last_applied": lj_status.get("last_applied"),
+            "status_age_seconds": status_age_seconds,
+        },
+    }
+
+
 class ModeRequest(BaseModel):
     mode: str
 
@@ -385,10 +434,47 @@ async def post_filler(request: Request) -> dict:
     return app.state.state_manager.get_full_state()
 
 
+
+# Eventlog entries carry no explicit severity in the DB (see db.py's
+# eventlog table) -- every call site's message text already reads as a
+# human sentence, so severity is inferred from that text at read time
+# instead of threading a `level` parameter through every log_event() call
+# in state.py/main.py. Order matters: checked top to bottom, first match
+# wins.
+_ERROR_KEYWORDS = ("verloren", "falschem/fehlendem secret abgelehnt")
+_WARNING_KEYWORDS = ("fehlgeschlagen", "abgelehnt", "offline", "ignoriert", "nicht zugeordnet")
+
+
+def _classify_log_level(message: str) -> str:
+    lower = message.lower()
+    if any(kw in lower for kw in _ERROR_KEYWORDS):
+        return "error"
+    if any(kw in lower for kw in _WARNING_KEYWORDS):
+        return "warning"
+    return "info"
+
+
+def _log_with_level(entry: dict) -> dict:
+    return {**entry, "level": _classify_log_level(entry["message"])}
+
+
 @app.get("/api/log")
 async def get_log(request: Request, limit: int = 100) -> list:
     require_admin(request)
-    return app.state.db.get_log(limit=limit)
+    return [_log_with_level(e) for e in app.state.db.get_log(limit=limit)]
+
+
+@app.get("/api/admin/errors")
+async def admin_errors(request: Request, limit: int = 20) -> list:
+    """Just the warning/error-classified subset of the eventlog, for the
+    Diagnose panel's compact "Fehler & Warnungen" list -- the full
+    Eventlog card still shows everything, unfiltered, right below it.
+    Pulls a wider page than `limit` from the DB since most entries are
+    plain info and would otherwise starve this filter on a quiet night."""
+    require_admin(request)
+    limit = max(1, min(limit, 200))
+    candidates = [_log_with_level(e) for e in app.state.db.get_log(limit=limit * 10)]
+    return [e for e in candidates if e["level"] != "info"][:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -753,6 +839,7 @@ def _lj_state() -> dict:
 @app.get("/public/api/lj/state")
 async def lj_state(request: Request) -> dict:
     require_lj(request)
+    app.state.lj_last_seen = iso_z(datetime.now(timezone.utc))
     return _lj_state()
 
 
@@ -764,10 +851,29 @@ async def ws_lj(websocket: WebSocket) -> None:
         return
     await websocket.accept()
     manager.lj_sockets.add(websocket)
+    app.state.lj_last_seen = iso_z(datetime.now(timezone.utc))
     try:
         await websocket.send_json(_lj_state())
         while True:
-            await websocket.receive_text()
+            message = await websocket.receive_text()
+            app.state.lj_last_seen = iso_z(datetime.now(timezone.utc))
+            # An old lj-controller build never sends anything here (this
+            # socket used to be push-only from the server's side, drained
+            # for drop-detection only) -- a newer build additionally
+            # reports its own OBS connection health this way, see
+            # lj_controller.py's _status_push_loop. Anything else
+            # (malformed JSON, a plain ping) is just liveness, same as
+            # before this was added.
+            try:
+                payload = json.loads(message)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and payload.get("type") == "status":
+                app.state.lj_status = {
+                    "obs_connected": payload.get("obs_connected"),
+                    "last_applied": payload.get("last_applied"),
+                    "received_at": app.state.lj_last_seen,
+                }
     except WebSocketDisconnect:
         pass
     except Exception:  # noqa: BLE001

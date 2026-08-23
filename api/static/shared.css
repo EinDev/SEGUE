@@ -132,6 +132,21 @@ input[type="text"], input[type="password"] {
   color: var(--red);
 }
 
+.pill-error {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+.pill-warning {
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+
+.pill-unknown {
+  background: var(--bg-raised-2);
+  color: var(--text-faint);
+}
+
 /* Connection-lost overlay, shared by both views */
 #conn-overlay {
   position: fixed;
@@ -268,7 +283,13 @@ a {
 }
 .chart-line--bitrate { stroke: var(--blue); }
 .chart-line--delay { stroke: var(--amber); }
+.chart-line--cpu { stroke: var(--blue); }
+.chart-line--ram { stroke: var(--green); }
+.chart-line--network { stroke: var(--amber); }
 
 .chart-dot { }
 .chart-dot.chart-line--bitrate { fill: var(--blue); }
 .chart-dot.chart-line--delay { fill: var(--amber); }
+.chart-dot.chart-line--cpu { fill: var(--blue); }
+.chart-dot.chart-line--ram { fill: var(--green); }
+.chart-dot.chart-line--network { fill: var(--amber); }

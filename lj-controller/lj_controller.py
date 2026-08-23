@@ -49,6 +49,7 @@ OBS_BACKOFF_START = 1.0
 OBS_BACKOFF_MAX = 15.0
 POLL_INTERVAL = 3.0
 OBS_HEARTBEAT_INTERVAL = 5.0
+STATUS_PUSH_INTERVAL = 5.0
 
 
 def load_config(path: Path) -> dict:
@@ -189,11 +190,19 @@ class LjController:
         headers = {"X-Onair-Lj-Token": self.config["lj_token"]}
         while True:
             poll_task = asyncio.create_task(self._poll_fallback())
+            status_task: Optional[asyncio.Task] = None
             try:
                 async with websockets.connect(url, additional_headers=headers) as ws:
                     logger.info("connected to api")
                     poll_task.cancel()
                     backoff = WS_BACKOFF_START
+                    # Reports this controller's own OBS connection health
+                    # back to api, so the admin panel's Diagnose view can
+                    # show whether the operator's machine is not just
+                    # reachable but actually driving OBS. An api build
+                    # that predates this just drains it like any other
+                    # inbound message on this socket -- safe either way.
+                    status_task = asyncio.create_task(self._status_push_loop(ws))
                     async for message in ws:
                         try:
                             state = json.loads(message)
@@ -202,14 +211,30 @@ class LjController:
                         await self.apply_state(state)
             except asyncio.CancelledError:
                 poll_task.cancel()
+                if status_task is not None:
+                    status_task.cancel()
                 raise
             except Exception as exc:  # noqa: BLE001 - this loop must never die
                 logger.warning("api connection lost/failed: %s", exc)
             finally:
                 if not poll_task.done():
                     poll_task.cancel()
+                if status_task is not None and not status_task.done():
+                    status_task.cancel()
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, WS_BACKOFF_MAX)
+
+    async def _status_push_loop(self, ws) -> None:
+        while True:
+            try:
+                await ws.send(json.dumps({
+                    "type": "status",
+                    "obs_connected": self.obs_connected,
+                    "last_applied": self.last_applied,
+                }))
+            except Exception:  # noqa: BLE001
+                return  # socket is dead; api_ws_loop's own reconnect handles the rest
+            await asyncio.sleep(STATUS_PUSH_INTERVAL)
 
     async def _poll_fallback(self) -> None:
         """Runs only while /public/ws/lj is down (cancelled the instant it
