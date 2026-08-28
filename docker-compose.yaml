@@ -88,6 +88,23 @@ services:
       # self-registered via login through your auth layer - there is no
       # config/djs.yaml file anymore).
       - ./data:/data
+    labels:
+      # Unset/empty by default (see .env.example) so this stays a no-op for
+      # non-Coolify deployments - verified with `docker compose config`:
+      # an unset COOLIFY_TRAEFIK_MIDDLEWARE_LABEL renders this as a single
+      # harmless key-less "": "" label entry that Docker accepts fine and
+      # nothing (Traefik included) ever looks at.
+      #
+      # If deploying via Coolify with Traefik + Authentik (this project's
+      # own setup), set COOLIFY_TRAEFIK_MIDDLEWARE_LABEL as a *Coolify-level
+      # persistent environment variable* on this service (Coolify's own UI,
+      # not by editing this file) to the full label Coolify needs, e.g.
+      # `coolify.traefik.middlewares=authentik-auth@file`. Unlike a label
+      # added by hand in Coolify's UI - which used to get silently wiped on
+      # every redeploy that regenerates this service from the compose file,
+      # see issue #12 - an env var set this way survives every redeploy.
+      # See the README's "Example: Authentik + Traefik" walkthrough.
+      - ${COOLIFY_TRAEFIK_MIDDLEWARE_LABEL:-}
     expose:
       - "8080"
       # No `ports:` mapping on purpose: this service is meant to sit behind
@@ -103,11 +120,11 @@ services:
       # and trusts that header completely, assuming only the proxy can set
       # it (so the proxy must strip/overwrite any client-supplied copy).
       #
-      # If deploying via Coolify with Traefik + Authentik (this project's
-      # own setup), that typically means attaching a domain to this service
-      # in the Coolify UI and adding a
-      # `coolify.traefik.middlewares=authentik-auth@file` label here - see
-      # the README's worked example for the full walkthrough.
+      # If deploying via Coolify with Traefik + Authentik, attach a domain
+      # to this service in the Coolify UI and set
+      # COOLIFY_TRAEFIK_MIDDLEWARE_LABEL (see the `labels:` block above and
+      # .env.example) instead of adding a label by hand - see the README's
+      # worked example for the full walkthrough.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"]
       interval: 10s
