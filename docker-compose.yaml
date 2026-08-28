@@ -23,8 +23,8 @@ services:
     # to bind a directory onto a file inside the container).
     ports:
       # RTMP publish (DJs) and RTSP read (the LJ machine's OBS) must bypass
-      # Traefik entirely, same reasoning the old harbor ports had: neither
-      # protocol's handshake survives an HTTP reverse proxy. Host-side port
+      # any HTTP reverse proxy entirely, same reasoning the old harbor
+      # ports had: neither protocol's handshake survives one. Host-side port
       # is split from the container-internal port (fixed at 1935/8554 in
       # mediamtx/mediamtx.yml) so a collision with something else already
       # bound to those ports on a shared host can be fixed by setting
@@ -82,29 +82,32 @@ services:
       ONAIR_DB_PATH: ${ONAIR_DB_PATH:-/data/onair.db}
     volumes:
       # Must be a persistent, named host path (not an anonymous volume that
-      # Coolify could recreate) - this is what keeps DJ logins/credentials
-      # alive across a redeploy. See CONCEPT.md section 9/11.5 (the DJ
-      # roster itself now lives entirely in this SQLite DB, self-registered
-      # via Authentik login - there is no config/djs.yaml file anymore).
+      # your platform could recreate) - this is what keeps DJ logins/
+      # credentials alive across a redeploy. See CONCEPT.md section 9/11.5
+      # (the DJ roster itself now lives entirely in this SQLite DB,
+      # self-registered via login through your auth layer - there is no
+      # config/djs.yaml file anymore).
       - ./data:/data
     expose:
       - "8080"
-      # No `ports:` mapping on purpose: Coolify attaches a domain (with
-      # automatic TLS) to this service through its own Traefik labels, which
-      # it injects when the operator sets a domain on this service in the
-      # Coolify UI. Publishing 8080 directly here would fight with that.
+      # No `ports:` mapping on purpose: this service is meant to sit behind
+      # your own reverse proxy, not be reachable directly. Publishing 8080
+      # to the host here would fight with that - instead, join your proxy
+      # to this compose network (or add its own `ports:`/label wiring) and
+      # point it at api:8080. See the README's "Auth & routing
+      # requirements" section for exactly what that proxy needs to do.
       #
-      # IMPORTANT: that Coolify domain must have an Authentik forward-auth
-      # middleware attached to it (see README) - this app has no login form
-      # of its own and trusts the ONAIR_AUTH_USERNAME_HEADER header
-      # completely, assuming only the proxy can set it.
-    labels:
-      # Injects into whatever router Coolify auto-generates for this
-      # service's domain, without us having to know/hardcode its
-      # Coolify-assigned router name. Requires an `authentik-auth`
-      # middleware defined in Coolify's Traefik dynamic config first
-      # (Servers > Proxy > Configuration) - see README.
-      - "coolify.traefik.middlewares=authentik-auth@file"
+      # IMPORTANT: whatever proxy/domain you attach must authenticate every
+      # request except /public/* and inject the authenticated username into
+      # ONAIR_AUTH_USERNAME_HEADER - this app has no login form of its own
+      # and trusts that header completely, assuming only the proxy can set
+      # it (so the proxy must strip/overwrite any client-supplied copy).
+      #
+      # If deploying via Coolify with Traefik + Authentik (this project's
+      # own setup), that typically means attaching a domain to this service
+      # in the Coolify UI and adding a
+      # `coolify.traefik.middlewares=authentik-auth@file` label here - see
+      # the README's worked example for the full walkthrough.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"]
       interval: 10s
