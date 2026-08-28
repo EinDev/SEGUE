@@ -199,6 +199,31 @@ body.conn-lost > #app {
   font-size: 1.3em;
 }
 
+/* Language switcher (top-right on both pages, see i18n.js) */
+.lang-switch {
+  position: fixed;
+  top: 0.7em;
+  right: 0.7em;
+  z-index: 100;
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-raised);
+}
+
+.lang-switch-btn {
+  padding: 0.3em 0.6em;
+  font-size: 0.8em;
+  border-radius: 0;
+  background: var(--bg-raised);
+}
+
+.lang-switch-btn.active {
+  background: var(--blue);
+  color: #fff;
+}
+
 /* Generic error/empty state */
 .error-state {
   display: flex;

@@ -10,6 +10,10 @@
 (function () {
   "use strict";
 
+  const t = window.SegueI18n.t;
+  window.SegueI18n.applyStatic();
+  window.SegueI18n.mountSwitcher(document.getElementById("lang-mount"));
+
   const deniedEl = document.getElementById("denied-app");
   const appEl = document.getElementById("app");
   const overlayEl = document.getElementById("conn-overlay");
@@ -204,7 +208,7 @@
       djRowsEl.innerHTML = "";
       const empty = document.createElement("div");
       empty.className = "text-faint";
-      empty.textContent = "Noch keine freigeschalteten DJs.";
+      empty.textContent = t("admin.djs.empty");
       djRowsEl.appendChild(empty);
       return;
     }
@@ -261,12 +265,12 @@
 
     const detailsBtn = document.createElement("button");
     detailsBtn.className = "details-btn";
-    detailsBtn.textContent = "Details";
+    detailsBtn.textContent = t("admin.djs.details");
     detailsBtn.addEventListener("click", () => toggleDetails(username));
 
     const onairBtn = document.createElement("button");
     onairBtn.className = "onair-btn";
-    onairBtn.textContent = "On Air schalten";
+    onairBtn.textContent = t("admin.djs.onAirBtn");
     onairBtn.addEventListener("click", () => pinDj(username));
 
     top.appendChild(name);
@@ -280,25 +284,25 @@
     details.className = "dj-details hidden";
     details.innerHTML =
       '<div class="dj-details-grid">' +
-      djDetailField("resolution", "Auflösung") +
-      djDetailField("codec", "Codec") +
-      djDetailField("bitrate", "Bitrate") +
-      djDetailField("delay", "Verzögerung DJ→Server") +
-      djDetailField("since", "Verbunden") +
-      djDetailField("remote", "Adresse") +
-      djDetailField("agent", "Encoder") +
+      djDetailField("resolution", t("common.resolution")) +
+      djDetailField("codec", t("common.codec")) +
+      djDetailField("bitrate", t("common.bitrate")) +
+      djDetailField("delay", t("common.delay")) +
+      djDetailField("since", t("common.connectedSince")) +
+      djDetailField("remote", t("admin.djs.field.remote")) +
+      djDetailField("agent", t("admin.djs.field.agent")) +
       "</div>" +
       '<div class="chart-block">' +
-      '<div class="chart-block-label">Bitrate (5 Min.)</div>' +
+      '<div class="chart-block-label">' + escapeHtml(t("common.chartBitrate5m")) + '</div>' +
       '<div class="chart-svg-wrap" data-chart="bitrate"></div>' +
       '<div class="chart-caption" data-chart-caption="bitrate"></div>' +
       "</div>" +
       '<div class="chart-block">' +
-      '<div class="chart-block-label">Verzögerung DJ→Server (5 Min.)</div>' +
+      '<div class="chart-block-label">' + escapeHtml(t("common.chartDelay5m")) + '</div>' +
       '<div class="chart-svg-wrap" data-chart="delay"></div>' +
       '<div class="chart-caption" data-chart-caption="delay"></div>' +
       "</div>" +
-      '<button class="preview-btn">Vorschau anzeigen</button>' +
+      '<button class="preview-btn">' + escapeHtml(t("admin.djs.previewShow")) + '</button>' +
       '<div class="preview-wrap hidden"><video class="preview-video" muted playsinline autoplay></video></div>';
     details.querySelector(".preview-btn").addEventListener("click", () => togglePreview(username, row));
 
@@ -323,7 +327,7 @@
 
     const pill = row.querySelector(".pill");
     pill.className = "pill " + (dj.connected ? "pill-connected" : "pill-disconnected");
-    pill.textContent = dj.connected ? "verbunden" : "nicht verbunden";
+    pill.textContent = dj.connected ? t("common.connected") : t("common.disconnected");
 
     row.querySelector(".dj-since").textContent = dj.connected ? formatSince(dj.since) : "";
     row.querySelector(".onair-btn").disabled = !dj.connected;
@@ -331,7 +335,7 @@
     const isExpanded = expandedDetails.has(dj.username);
     const detailsEl = row.querySelector(".dj-details");
     detailsEl.classList.toggle("hidden", !isExpanded);
-    row.querySelector(".details-btn").textContent = isExpanded ? "Details ausblenden" : "Details";
+    row.querySelector(".details-btn").textContent = isExpanded ? t("admin.djs.detailsHide") : t("admin.djs.details");
 
     if (isExpanded) {
       startDetailStatsPolling(dj.username, detailsEl); // idempotent if already running
@@ -401,17 +405,17 @@
       set("remote", "—");
       set("agent", "—");
     } else {
-      set("resolution", data.resolution || "unbekannt");
-      set("codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || "unbekannt");
-      set("bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : "wird berechnet…");
-      // Same figure as the DJ's own "Verbindungsqualität" card - this is
+      set("resolution", data.resolution || t("common.unknown"));
+      set("codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || t("common.unknown"));
+      set("bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : t("common.calculating"));
+      // Same figure as the DJ's own "connection quality" card - this is
       // DJ-encoder-to-relay delay only, not end-to-end to VRCDN (see
       // mediamtx_stats.py's module docstring for why that isn't
       // measurable from here).
-      set("delay", data.delay_seconds != null ? `${data.delay_seconds.toFixed(1)} s` : "unbekannt");
-      set("since", data.connected_since ? formatSince(data.connected_since) : "unbekannt");
-      set("remote", data.remote_addr || "unbekannt");
-      set("agent", data.user_agent || "unbekannt");
+      set("delay", data.delay_seconds != null ? `${data.delay_seconds.toFixed(1)} s` : t("common.unknown"));
+      set("since", data.connected_since ? formatSince(data.connected_since) : t("common.unknown"));
+      set("remote", data.remote_addr || t("common.unknown"));
+      set("agent", data.user_agent || t("common.unknown"));
     }
 
     // 5-min trend charts - "history" is server-side sampled/stored (see
@@ -459,7 +463,7 @@
     }
 
     wrap.classList.remove("hidden");
-    btn.textContent = "Vorschau ausblenden";
+    btn.textContent = t("admin.djs.previewHide");
     const video = wrap.querySelector("video");
     const src = `/api/admin/preview/${encodeURIComponent(roster.slot)}/index.m3u8`;
 
@@ -480,7 +484,7 @@
       video.play().catch(() => {});
       activePreviews.set(username, true);
     } else {
-      wrap.textContent = "Vorschau in diesem Browser nicht unterstützt.";
+      wrap.textContent = t("admin.djs.previewUnsupported");
     }
   }
 
@@ -500,7 +504,7 @@
         video.load();
       }
     }
-    if (btn) btn.textContent = "Vorschau anzeigen";
+    if (btn) btn.textContent = t("admin.djs.previewShow");
   }
 
   function teardownAllPreviews() {
@@ -515,7 +519,7 @@
     if (Number.isNaN(d.getTime())) return "";
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
-    return `seit ${hh}:${mm}`;
+    return t("common.since", { time: `${hh}:${mm}` });
   }
 
   // ---- Rendering: DJ roster (registration + ready approval) ----
@@ -545,7 +549,7 @@
       rosterRowsEl.innerHTML = "";
       const empty = document.createElement("div");
       empty.className = "text-faint";
-      empty.textContent = "Noch niemand hat sich über den DJ-Link angemeldet.";
+      empty.textContent = t("admin.roster.empty");
       rosterRowsEl.appendChild(empty);
       return;
     }
@@ -666,7 +670,7 @@
 
     const pill = row.querySelector(".pill");
     pill.className = "pill " + (dj.connected ? "pill-connected" : "pill-disconnected");
-    pill.textContent = dj.connected ? "verbunden" : "nicht verbunden";
+    pill.textContent = dj.connected ? t("common.connected") : t("common.disconnected");
 
     row.querySelector(".slot").textContent = dj.slot || "";
 
@@ -702,16 +706,16 @@
     if (pendingDeleteUsername === dj.username) {
       const confirmText = document.createElement("span");
       confirmText.className = "confirm-text";
-      confirmText.textContent = "Wirklich löschen?";
+      confirmText.textContent = t("admin.roster.confirmDelete");
 
       const yes = document.createElement("button");
       yes.className = "confirm-yes-btn";
-      yes.textContent = "Ja";
+      yes.textContent = t("admin.roster.confirmYes");
       yes.addEventListener("click", () => deleteDj(dj.username));
 
       const no = document.createElement("button");
       no.className = "confirm-no-btn";
-      no.textContent = "Abbrechen";
+      no.textContent = t("admin.roster.confirmNo");
       no.addEventListener("click", () => {
         pendingDeleteUsername = null;
         renderRoster(lastRosterDjs);
@@ -723,12 +727,12 @@
     } else {
       const toggle = document.createElement("button");
       toggle.className = "ready-toggle" + (dj.ready ? " on" : "");
-      toggle.textContent = dj.ready ? "Bereit" : "Nicht bereit";
+      toggle.textContent = dj.ready ? t("admin.roster.ready") : t("admin.roster.notReady");
       toggle.addEventListener("click", () => setReady(dj.username, !dj.ready));
 
       const del = document.createElement("button");
       del.className = "delete-btn";
-      del.textContent = "Löschen";
+      del.textContent = t("admin.roster.delete");
       del.addEventListener("click", () => {
         pendingDeleteUsername = dj.username;
         renderRoster(lastRosterDjs);
@@ -915,7 +919,16 @@
       });
       if (resp.status === 409) {
         const body = await resp.json().catch(() => ({}));
-        rosterError = { username, message: body.detail || "Kein freier Slot verfügbar." };
+        // detail is a structured {code, max_djs} from the api (see
+        // set_dj_ready in main.py) so it can be localized here instead of
+        // shipping a pre-rendered German string over the wire.
+        rosterError = {
+          username,
+          message:
+            body.detail && body.detail.code === "no_free_slot"
+              ? t("admin.roster.noFreeSlotDetailed", { max_djs: body.detail.max_djs })
+              : t("admin.roster.noFreeSlot"),
+        };
       }
     } catch (e) {
       // handled via authedFetch (401) or network error; nothing else to do
@@ -955,7 +968,7 @@
     if (!entries || entries.length === 0) {
       const row = document.createElement("div");
       row.className = "text-faint";
-      row.textContent = "Keine Einträge.";
+      row.textContent = t("admin.eventlog.empty");
       eventlogEl.appendChild(row);
       return;
     }
@@ -1030,8 +1043,8 @@
     const ms = Date.now() - new Date(iso).getTime();
     if (!Number.isFinite(ms) || ms < 0) return "";
     const s = Math.round(ms / 1000);
-    if (s < 60) return `vor ${s}s`;
-    return `vor ${Math.round(s / 60)}min`;
+    if (s < 60) return t("admin.diag.agoSeconds", { s });
+    return t("admin.diag.agoMinutes", { m: Math.round(s / 60) });
   }
 
   function setPill(el, ok, textOk, textBad, badClass) {
@@ -1051,24 +1064,36 @@
     // MediaMTX being unreachable is a real problem (nothing can go on
     // air), so it gets the red "error" pill rather than the neutral grey
     // used for e.g. "DJ not currently connected" elsewhere on this page.
-    setPill(diagMediamtxPillEl, !!data.mediamtx_alive, "erreichbar", "nicht erreichbar", "pill-error");
+    setPill(
+      diagMediamtxPillEl,
+      !!data.mediamtx_alive,
+      t("admin.diag.reachable"),
+      t("admin.diag.notReachable"),
+      "pill-error"
+    );
 
     const lj = data.lj || {};
     // The LJ controller only runs during an actual event, so "not
     // connected" is the expected idle state most of the time -- amber,
     // not red.
-    setPill(diagLjPillEl, !!lj.connected, "verbunden", "nicht verbunden", "pill-warning");
+    setPill(diagLjPillEl, !!lj.connected, t("common.connected"), t("common.disconnected"), "pill-warning");
     diagLjLastSeenEl.textContent = lj.last_seen
-      ? `zuletzt gesehen ${formatAgo(lj.last_seen)}`
-      : "noch nie gesehen";
+      ? t("admin.diag.lastSeen", { ago: formatAgo(lj.last_seen) })
+      : t("admin.diag.neverSeen");
 
     if (lj.obs_connected == null) {
       diagLjObsPillEl.classList.add("hidden");
     } else {
       diagLjObsPillEl.classList.remove("hidden");
-      setPill(diagLjObsPillEl, lj.obs_connected, "OBS verbunden", "OBS getrennt", "pill-warning");
+      setPill(
+        diagLjObsPillEl,
+        lj.obs_connected,
+        t("admin.diag.obsConnected"),
+        t("admin.diag.obsDisconnected"),
+        "pill-warning"
+      );
     }
-    diagLjSourceEl.textContent = lj.last_applied ? `Quelle: ${lj.last_applied}` : "";
+    diagLjSourceEl.textContent = lj.last_applied ? t("admin.diag.source", { source: lj.last_applied }) : "";
 
     const history = data.history || [];
     window.SegueChart.renderSparkline(
@@ -1112,7 +1137,7 @@
     if (!entries || entries.length === 0) {
       const row = document.createElement("div");
       row.className = "text-faint";
-      row.textContent = "Keine Fehler oder Warnungen.";
+      row.textContent = t("admin.diag.errorsEmpty");
       diagErrorsEl.appendChild(row);
       return;
     }

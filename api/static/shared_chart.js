@@ -54,7 +54,7 @@ window.SegueChart = (function () {
     if (values.length === 0) {
       wrapEl.innerHTML = "";
       wrapEl.classList.add("chart-empty");
-      wrapEl.textContent = "keine Daten";
+      wrapEl.textContent = window.SegueI18n.t("common.noData");
       if (captionEl) captionEl.textContent = "";
       return;
     }
@@ -114,7 +114,11 @@ window.SegueChart = (function () {
         dataMin === dataMax
           ? `${dataMin.toFixed(decimals)}${unit}`
           : `${dataMin.toFixed(decimals)}–${dataMax.toFixed(decimals)}${unit}`;
-      return `aktuell ${last.toFixed(decimals)}${unit} · letzte 5 Min.: ${rangeText}`;
+      return window.SegueI18n.t("common.chartCaption", {
+        last: last.toFixed(decimals),
+        unit: unit,
+        range: rangeText,
+      });
     })();
     if (captionEl) captionEl.textContent = baseCaption;
 
@@ -180,7 +184,11 @@ window.SegueChart = (function () {
         const hh = String(d.getHours()).padStart(2, "0");
         const mm = String(d.getMinutes()).padStart(2, "0");
         const ss = String(d.getSeconds()).padStart(2, "0");
-        captionEl.textContent = `${sample.v.toFixed(decimals)}${unit} um ${hh}:${mm}:${ss}`;
+        captionEl.textContent = window.SegueI18n.t("common.chartHoverAt", {
+          value: sample.v.toFixed(decimals),
+          unit: unit,
+          time: `${hh}:${mm}:${ss}`,
+        });
       }
     }
 
