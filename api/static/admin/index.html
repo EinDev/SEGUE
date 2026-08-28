@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>SEGUE — Admin</title>
+<title data-i18n="admin.title">SEGUE — Admin</title>
 <link rel="stylesheet" href="/static/shared.css">
 <style>
   /* Admin is a utility screen, not a showcase -- optimized for scanning
@@ -46,7 +46,10 @@
   #app {
     max-width: 1100px;
     margin: 0 auto;
-    padding: 0.6em 0.6em 1.5em 0.6em;
+    /* Extra top padding leaves clear space above for the fixed
+       DE/EN language switch (see .lang-switch in shared.css) so it
+       doesn't sit on top of the clock in the header below. */
+    padding: 2.6em 0.6em 1.5em 0.6em;
     display: flex;
     flex-direction: column;
     gap: 0.5em;
@@ -385,10 +388,12 @@
 </head>
 <body>
 
+<div id="lang-mount"></div>
+
 <div id="denied-app" class="hidden">
   <div class="box">
-    <h1>Kein Zugriff</h1>
-    <p>Diese Ansicht ist nur für den Admin-Account. Falls du das sein solltest, prüfe die
+    <h1 data-i18n="common.noAccess">Kein Zugriff</h1>
+    <p data-i18n-html="admin.denied.body">Diese Ansicht ist nur für den Admin-Account. Falls du das sein solltest, prüfe die
     Authentik-Anmeldung und <code>ONAIR_ADMIN_USERNAME</code> auf dem Server.</p>
   </div>
 </div>
@@ -404,8 +409,8 @@
   </header>
 
   <div class="rtmp-info">
-    <span class="rtmp-info-label">RTMP-Server:</span>
-    <span class="rtmp-info-value mono" id="rtmp-server-value">wird geladen…</span>
+    <span class="rtmp-info-label" data-i18n="admin.rtmpServer.label">RTMP-Server:</span>
+    <span class="rtmp-info-value mono" id="rtmp-server-value" data-i18n="admin.rtmpServer.loading">wird geladen…</span>
   </div>
 
   <div id="warning-banner" class="warning-banner hidden">
@@ -413,16 +418,16 @@
     <span id="warning-text"></span>
   </div>
 
-  <button class="filler-btn" id="filler-btn">Filler erzwingen</button>
+  <button class="filler-btn" id="filler-btn" data-i18n="admin.fillerBtn">Filler erzwingen</button>
 
   <div class="card">
-    <h2>DJs</h2>
+    <h2 data-i18n="admin.djs.title">DJs</h2>
     <div id="dj-rows"></div>
   </div>
 
   <div class="card">
-    <h2>DJ-Verwaltung</h2>
-    <p class="text-faint" style="margin-top: -0.4em; margin-bottom: 0.8em;">
+    <h2 data-i18n="admin.roster.title">DJ-Verwaltung</h2>
+    <p class="text-faint" style="margin-top: -0.4em; margin-bottom: 0.8em;" data-i18n-html="admin.roster.intro">
       Jede Person, die sich einmal über den DJ-Link anmeldet, taucht hier auf.
       Erst nach Freischaltung ("bereit") kann sie tatsächlich einspeisen.
     </p>
@@ -430,8 +435,8 @@
   </div>
 
   <div class="card">
-    <h2>LJ-Setup</h2>
-    <p class="text-faint" style="margin-top: -0.4em; margin-bottom: 0.8em;">
+    <h2 data-i18n="admin.ljSetup.title">LJ-Setup</h2>
+    <p class="text-faint" style="margin-top: -0.4em; margin-bottom: 0.8em;" data-i18n-html="admin.ljSetup.intro">
       Der Operator, der lokal in OBS zwischen den DJs umschaltet ("LJ"),
       braucht ein eigenes kleines Steuerskript neben seinem OBS - siehe
       <code>lj-controller/</code> im Repo für den vollen Hintergrund.
@@ -439,14 +444,14 @@
     </p>
 
     <div class="lj-downloads">
-      <a class="lj-download-btn" href="/api/admin/lj/package.zip">
+      <a class="lj-download-btn" href="/api/admin/lj/package.zip" data-i18n="admin.ljSetup.downloadPackage">
         Komplettpaket herunterladen (.zip)
       </a>
-      <a class="lj-download-btn lj-download-btn-secondary" href="/api/admin/lj/obs-scene.json">
+      <a class="lj-download-btn lj-download-btn-secondary" href="/api/admin/lj/obs-scene.json" data-i18n="admin.ljSetup.downloadScene">
         Nur OBS-Szene herunterladen (.json)
       </a>
     </div>
-    <p class="text-faint lj-downloads-hint">
+    <p class="text-faint lj-downloads-hint" data-i18n-html="admin.ljSetup.downloadHint">
       Das Paket enthält bereits die Szene-Datei - der separate Button ist
       nur praktisch, wenn schon alles andere installiert ist und nur die
       Szene neu importiert werden soll (z. B. nach Änderung von
@@ -454,14 +459,14 @@
     </p>
 
     <details class="lj-setup-steps">
-      <summary>Setup-Schritte für den LJ</summary>
+      <summary data-i18n="admin.ljSetup.stepsSummary">Setup-Schritte für den LJ</summary>
       <ol>
-        <li><strong>Voraussetzungen auf dem LJ-Rechner:</strong> OBS 28
+        <li data-i18n-html="admin.ljSetup.step1"><strong>Voraussetzungen auf dem LJ-Rechner:</strong> OBS 28
           oder neuer (für obs-websocket, ist ab 28 eingebaut) und
           Python 3.10+.</li>
-        <li><strong>Paket entpacken</strong>, dann in einem Terminal im
+        <li data-i18n-html="admin.ljSetup.step2"><strong>Paket entpacken</strong>, dann in einem Terminal im
           entpackten Ordner: <code>pip install -r requirements.txt</code>.</li>
-        <li><strong>OBS-Szene importieren:</strong> OBS &rarr; Szenen-Sammlung
+        <li data-i18n-html="admin.ljSetup.step3"><strong>OBS-Szene importieren:</strong> OBS &rarr; Szenen-Sammlung
           &rarr; Importieren &rarr; die mitgelieferte
           <code>segue-obs-scene.json</code> auswählen. Enthält bereits eine
           Szene "Live" mit einer Quelle pro DJ-Slot (RTSP, mit den echten
@@ -471,7 +476,7 @@
           Import nicht sauber klappt, unten die manuellen Schritte
           nutzen, das Paket enthält auch dafür die volle Anleitung
           (<code>README.md</code>).</li>
-        <li><strong>Kritisch, bei jeder der importierten Quellen
+        <li data-i18n-html="admin.ljSetup.step4"><strong>Kritisch, bei jeder der importierten Quellen
           prüfen:</strong> Rechtsklick auf die Quelle &rarr;
           Eigenschaften &rarr; <strong>"Close file when inactive"
           MUSS deaktiviert sein.</strong> Steht das an, pausiert OBS die
@@ -481,13 +486,13 @@
           Der Import setzt das zwar bereits korrekt, aber einmal von Hand
           gegenprüfen kostet zehn Sekunden und erspart eine böse
           Überraschung am Abend.</li>
-        <li><strong>obs-websocket aktivieren:</strong> Tools &rarr;
+        <li data-i18n-html="admin.ljSetup.step5"><strong>obs-websocket aktivieren:</strong> Tools &rarr;
           WebSocket-Server-Einstellungen, aktivieren, Passwort setzen
           (Port bleibt normalerweise 4455).</li>
-        <li><strong>config.yaml prüfen</strong> (liegt im Paket bereits
+        <li data-i18n-html="admin.ljSetup.step6"><strong>config.yaml prüfen</strong> (liegt im Paket bereits
           fertig ausgefüllt, bis auf das obs-websocket-Passwort von eben -
           das dort eintragen).</li>
-        <li><strong>Starten:</strong> <code>python lj_controller.py</code>
+        <li data-i18n-html="admin.ljSetup.step7"><strong>Starten:</strong> <code>python lj_controller.py</code>
           in einer sichtbaren Konsole laufen lassen, für die gesamte
           Dauer des Events - dort stehen alle Reconnects/Wechsel im Log,
           das ist um 3 Uhr nachts die schnellste Fehlerquelle.</li>
@@ -496,75 +501,76 @@
   </div>
 
   <div class="card">
-    <h2>Diagnose</h2>
+    <h2 data-i18n="admin.diag.title">Diagnose</h2>
 
     <div class="diag-grid">
       <div class="diag-tile">
-        <div class="diag-label">CPU</div>
+        <div class="diag-label" data-i18n="admin.diag.cpu">CPU</div>
         <div class="diag-value" id="diag-cpu">—</div>
       </div>
       <div class="diag-tile">
-        <div class="diag-label">RAM</div>
+        <div class="diag-label" data-i18n="admin.diag.ram">RAM</div>
         <div class="diag-value" id="diag-ram">—</div>
       </div>
       <div class="diag-tile">
-        <div class="diag-label">Disk</div>
+        <div class="diag-label" data-i18n="admin.diag.disk">Disk</div>
         <div class="diag-value" id="diag-disk">—</div>
       </div>
       <div class="diag-tile">
-        <div class="diag-label">Netzwerk</div>
+        <div class="diag-label" data-i18n="admin.diag.net">Netzwerk</div>
         <div class="diag-value" id="diag-net">—</div>
       </div>
       <div class="diag-tile">
-        <div class="diag-label">Laufzeit</div>
+        <div class="diag-label" data-i18n="admin.diag.uptime">Laufzeit</div>
         <div class="diag-value" id="diag-uptime">—</div>
       </div>
       <div class="diag-tile">
-        <div class="diag-label">MediaMTX</div>
-        <div class="diag-value"><span class="pill pill-unknown" id="diag-mediamtx-pill">unbekannt</span></div>
+        <div class="diag-label" data-i18n="admin.diag.mediamtx">MediaMTX</div>
+        <div class="diag-value"><span class="pill pill-unknown" id="diag-mediamtx-pill" data-i18n="common.unknown">unbekannt</span></div>
       </div>
     </div>
 
     <div class="diag-charts">
       <div class="chart-block">
-        <div class="chart-block-label">CPU (5 Min.)</div>
+        <div class="chart-block-label" data-i18n="admin.diag.chartCpu5m">CPU (5 Min.)</div>
         <div class="chart-svg-wrap" data-diag-chart="cpu"></div>
         <div class="chart-caption" data-diag-chart-caption="cpu"></div>
       </div>
       <div class="chart-block">
-        <div class="chart-block-label">RAM (5 Min.)</div>
+        <div class="chart-block-label" data-i18n="admin.diag.chartRam5m">RAM (5 Min.)</div>
         <div class="chart-svg-wrap" data-diag-chart="ram"></div>
         <div class="chart-caption" data-diag-chart-caption="ram"></div>
       </div>
       <div class="chart-block">
-        <div class="chart-block-label">Netzwerk (5 Min.)</div>
+        <div class="chart-block-label" data-i18n="admin.diag.chartNet5m">Netzwerk (5 Min.)</div>
         <div class="chart-svg-wrap" data-diag-chart="net"></div>
         <div class="chart-caption" data-diag-chart-caption="net"></div>
       </div>
     </div>
 
     <div class="diag-lj-row">
-      <span class="diag-label">LJ-Controller:</span>
-      <span class="pill pill-unknown" id="diag-lj-pill">unbekannt</span>
+      <span class="diag-label" data-i18n="admin.diag.ljController">LJ-Controller:</span>
+      <span class="pill pill-unknown" id="diag-lj-pill" data-i18n="common.unknown">unbekannt</span>
       <span class="text-faint" id="diag-lj-lastseen"></span>
       <span class="pill pill-unknown hidden" id="diag-lj-obs-pill"></span>
       <span class="text-faint" id="diag-lj-source"></span>
     </div>
 
-    <h2 style="margin-top: 0.8em;">Fehler &amp; Warnungen</h2>
+    <h2 style="margin-top: 0.8em;" data-i18n="admin.diag.errorsTitle">Fehler &amp; Warnungen</h2>
     <div id="diag-errors"></div>
   </div>
 
   <div class="card">
-    <h2>Eventlog</h2>
+    <h2 data-i18n="admin.eventlog.title">Eventlog</h2>
     <div id="eventlog"></div>
   </div>
 </div>
 
 <div id="conn-overlay">
-  <div class="box">Verbindung zum Server verloren</div>
+  <div class="box" data-i18n="common.connLost">Verbindung zum Server verloren</div>
 </div>
 
+<script src="/static/i18n.js"></script>
 <script src="/static/vendor/hls.min.js"></script>
 <script src="/static/shared_chart.js"></script>
 <script src="/static/admin/admin.js"></script>

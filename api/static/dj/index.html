@@ -3,13 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>SEGUE — DJ</title>
+<title data-i18n="dj.title">SEGUE — DJ</title>
 <link rel="stylesheet" href="/static/shared.css">
 <style>
   #app {
     max-width: 900px;
     margin: 0 auto;
-    padding: 1em 1em 3em 1em;
+    /* Extra top padding leaves clear space above for the fixed
+       DE/EN language switch (see .lang-switch in shared.css) so it
+       doesn't sit on top of the tally box below. */
+    padding: 3em 1em 3em 1em;
     display: flex;
     flex-direction: column;
     gap: 1em;
@@ -217,38 +220,43 @@
 </head>
 <body>
 
+<div id="lang-mount"></div>
+
 <div id="app" class="hidden">
   <div id="tally" class="state-disconnected">
-    <div class="tally-label" id="tally-label">NICHT VERBUNDEN</div>
+    <div class="tally-label" id="tally-label" data-i18n="dj.tally.disconnected">NICHT VERBUNDEN</div>
     <div class="tally-sub" id="tally-name">—</div>
   </div>
 
-  <div id="live-now" class="card">Lädt…</div>
+  <div id="live-now" class="card" data-i18n="dj.liveNow.loading">Lädt…</div>
 
   <div class="card" id="other-djs">
-    <h2>Andere DJs</h2>
+    <h2 data-i18n="dj.otherDjs.title">Andere DJs</h2>
     <ul id="other-djs-list"></ul>
   </div>
 
   <div class="card" id="credentials">
-    <h2>Deine Zugangsdaten</h2>
+    <h2 data-i18n="dj.credentials.title">Deine Zugangsdaten</h2>
     <div class="cred-row">
-      <div class="cred-label">Server</div>
+      <div class="cred-label" data-i18n="dj.credentials.server">Server</div>
       <div class="cred-value" id="cred-rtmp-server">—</div>
-      <button class="cred-copy-btn" data-copy-target="cred-rtmp-server">Kopieren</button>
+      <button class="cred-copy-btn" data-copy-target="cred-rtmp-server" data-i18n="common.copy">Kopieren</button>
     </div>
     <div class="cred-row">
-      <div class="cred-label">Stream-Key</div>
+      <div class="cred-label" data-i18n="dj.credentials.streamKey">Stream-Key</div>
       <div class="cred-value" id="cred-stream-key">•••••••</div>
-      <button class="cred-toggle-btn" id="cred-stream-key-toggle">Anzeigen</button>
-      <button class="cred-copy-btn" data-copy-target="cred-stream-key" data-copy-raw="password">Kopieren</button>
+      <button class="cred-toggle-btn" id="cred-stream-key-toggle" data-i18n="common.show">Anzeigen</button>
+      <button class="cred-copy-btn" data-copy-target="cred-stream-key" data-copy-raw="password" data-i18n="common.copy">Kopieren</button>
     </div>
-    <div class="format-hint" id="cred-format-hint"></div>
+    <div class="format-hint" id="cred-format-hint" data-i18n="dj.credentials.formatHint">
+      OBS: Einstellungen -> Stream -> Dienst 'Benutzerdefiniert...'.
+      Server und Stream-Key oben eintragen. Video H.264, Audio AAC.
+    </div>
   </div>
 
   <div class="card" id="howto">
-    <h2>Verbinden mit OBS</h2>
-    <p class="howto-intro">
+    <h2 data-i18n="dj.howto.title">Verbinden mit OBS</h2>
+    <p class="howto-intro" data-i18n-html="dj.howto.intro">
       Trag die Zugangsdaten oben (Server, Stream-Key) in OBS ein - am besten
       per "Kopieren"-Button, um Tippfehler zu vermeiden.
       Am wichtigsten: teste die Verbindung <em>vor</em> dem Event einmal kurz,
@@ -256,21 +264,21 @@
     </p>
 
     <details class="howto-app" open>
-      <summary>OBS Studio</summary>
+      <summary data-i18n="dj.howto.obs.summary">OBS Studio</summary>
       <ol>
-        <li><strong>Einstellungen</strong> → <strong>Stream</strong>.</li>
-        <li><strong>Dienst</strong>: <em>Benutzerdefiniert...</em> auswählen.</li>
-        <li><strong>Server</strong> = der Server-Wert oben, <strong>Stream-Key</strong>
+        <li data-i18n-html="dj.howto.obs.step1"><strong>Einstellungen</strong> → <strong>Stream</strong>.</li>
+        <li data-i18n-html="dj.howto.obs.step2"><strong>Dienst</strong>: <em>Benutzerdefiniert...</em> auswählen.</li>
+        <li data-i18n-html="dj.howto.obs.step3"><strong>Server</strong> = der Server-Wert oben, <strong>Stream-Key</strong>
           = der Stream-Key-Wert oben (auf "Anzeigen" klicken, dann kopieren).</li>
-        <li><strong>Ausgabe</strong>-Reiter: Video-Encoder H.264 (x264 oder ein
+        <li data-i18n-html="dj.howto.obs.step4"><strong>Ausgabe</strong>-Reiter: Video-Encoder H.264 (x264 oder ein
           Hardware-Encoder), Audio-Encoder AAC - beides ist OBS' Standard, hier
           muss meist nichts geändert werden.</li>
-        <li>Übernehmen, dann im Hauptfenster auf
+        <li data-i18n-html="dj.howto.obs.step5">Übernehmen, dann im Hauptfenster auf
           <strong>Streaming starten</strong> klicken.</li>
       </ol>
     </details>
 
-    <p class="howto-note">
+    <p class="howto-note" data-i18n-html="dj.howto.note">
       Andere Software mit generischem RTMP-Push funktioniert genauso - Server
       und Stream-Key heißen dort oft "URL" bzw. "Key"/"Pfad". Solange sie
       H.264-Video und AAC-Audio per RTMP senden kann, passt sie.
@@ -278,42 +286,42 @@
   </div>
 
   <div class="card" id="conn-quality">
-    <h2>Verbindungsqualität</h2>
-    <div id="conn-quality-empty">nicht verfügbar</div>
+    <h2 data-i18n="dj.connQuality.title">Verbindungsqualität</h2>
+    <div id="conn-quality-empty" data-i18n="dj.connQuality.empty">nicht verfügbar</div>
     <div id="conn-quality-data" class="hidden">
       <div class="cred-row">
-        <div class="cred-label">Auflösung</div>
+        <div class="cred-label" data-i18n="common.resolution">Auflösung</div>
         <div class="cred-value" id="cq-resolution">—</div>
       </div>
       <div class="cred-row">
-        <div class="cred-label">Codec</div>
+        <div class="cred-label" data-i18n="common.codec">Codec</div>
         <div class="cred-value" id="cq-codec">—</div>
       </div>
       <div class="cred-row">
-        <div class="cred-label">Bitrate</div>
+        <div class="cred-label" data-i18n="common.bitrate">Bitrate</div>
         <div class="cred-value" id="cq-bitrate">—</div>
       </div>
       <div class="cred-row">
-        <div class="cred-label">Verbunden</div>
+        <div class="cred-label" data-i18n="common.connectedSince">Verbunden</div>
         <div class="cred-value" id="cq-since">—</div>
       </div>
       <div class="cred-row">
-        <div class="cred-label">Delay DJ→Server</div>
+        <div class="cred-label" data-i18n="common.delay">Delay DJ→Server</div>
         <div class="cred-value" id="cq-delay">—</div>
       </div>
-      <p class="format-hint">
+      <p class="format-hint" data-i18n-html="dj.connQuality.delayHint">
         Diese Verzögerung misst nur die Strecke von deinem Encoder bis zum
         Server (inklusive kurzer Pufferung dort) - nicht die zusätzliche
         Verzögerung durch das OBS des Betreibers und den Push zu VRCDN,
         die von hier aus nicht messbar ist.
       </p>
       <div class="chart-block">
-        <div class="chart-block-label">Bitrate (5 Min.)</div>
+        <div class="chart-block-label" data-i18n="common.chartBitrate5m">Bitrate (5 Min.)</div>
         <div class="chart-svg-wrap" id="cq-chart-bitrate"></div>
         <div class="chart-caption" id="cq-chart-bitrate-caption"></div>
       </div>
       <div class="chart-block">
-        <div class="chart-block-label">Delay DJ→Server (5 Min.)</div>
+        <div class="chart-block-label" data-i18n="common.chartDelay5m">Delay DJ→Server (5 Min.)</div>
         <div class="chart-svg-wrap" id="cq-chart-delay"></div>
         <div class="chart-caption" id="cq-chart-delay-caption"></div>
       </div>
@@ -323,26 +331,27 @@
 
 <div id="pending-app" class="hidden">
   <div class="box">
-    <h1>Warte auf Freischaltung</h1>
-    <p>Angemeldet als <span class="username" id="pending-username">—</span>.</p>
-    <p>Ein Admin muss dich erst freischalten, bevor du einspeisen kannst.
+    <h1 data-i18n="dj.pending.title">Warte auf Freischaltung</h1>
+    <p><span data-i18n="dj.pending.loggedInAs">Angemeldet als</span> <span class="username" id="pending-username">—</span>.</p>
+    <p data-i18n="dj.pending.body">Ein Admin muss dich erst freischalten, bevor du einspeisen kannst.
     Diese Seite aktualisiert sich automatisch, sobald das passiert ist.</p>
   </div>
 </div>
 
 <div id="error-app" class="error-state hidden">
   <div class="box">
-    <h1>Kein Zugriff</h1>
-    <p class="text-dim">Diese Seite muss über den vom Betreiber bereitgestellten Login-Weg
+    <h1 data-i18n="common.noAccess">Kein Zugriff</h1>
+    <p class="text-dim" data-i18n="dj.error.body">Diese Seite muss über den vom Betreiber bereitgestellten Login-Weg
     aufgerufen werden. Falls du darüber hier bist, ist etwas an der Anmeldung falsch
     konfiguriert - bitte den Betreiber kontaktieren.</p>
   </div>
 </div>
 
 <div id="conn-overlay">
-  <div class="box">Verbindung zum Server verloren</div>
+  <div class="box" data-i18n="common.connLost">Verbindung zum Server verloren</div>
 </div>
 
+<script src="/static/i18n.js"></script>
 <script src="/static/shared_chart.js"></script>
 <script src="/static/dj/dj.js"></script>
 </body>
