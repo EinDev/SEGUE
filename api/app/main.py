@@ -434,6 +434,24 @@ async def post_filler(request: Request) -> dict:
     return app.state.state_manager.get_full_state()
 
 
+class EventNameRequest(BaseModel):
+    name: Optional[str] = None
+
+
+@app.post("/api/admin/event-name")
+async def post_event_name(body: EventNameRequest, request: Request) -> dict:
+    # Purely cosmetic (shown on both dashboards' header) -- not part of
+    # StateManager's own fields, so it's read fresh from the DB by
+    # get_full_state()/get_dj_state() rather than cached in memory here.
+    require_admin(request)
+    app.state.db.set_event_name(body.name)
+    app.state.db.log_event(
+        f"Eventname geändert: {body.name!r}" if body.name else "Eventname entfernt"
+    )
+    await manager.broadcast()
+    return {"event_name": app.state.db.get_event_name()}
+
+
 
 # Eventlog entries carry no explicit severity in the DB (see db.py's
 # eventlog table) -- every call site's message text already reads as a
@@ -606,6 +624,7 @@ async def admin_lj_obs_scene(request: Request) -> Response:
 async def list_djs(request: Request) -> list:
     require_admin(request)
     connected = set(app.state.state_manager.connected_since)
+    unread_counts = app.state.db.unread_dj_message_counts()
     return [
         {
             "username": dj["username"],
@@ -613,9 +632,37 @@ async def list_djs(request: Request) -> list:
             "slot": dj["slot"],
             "connected": dj["username"] in connected,
             "created_at": dj["created_at"],
+            "scheduled_start": dj.get("scheduled_start"),
+            "scheduled_end": dj.get("scheduled_end"),
+            "unread_messages": unread_counts.get(dj["username"], 0),
         }
         for dj in app.state.db.list_djs()
     ]
+
+
+class ScheduleRequest(BaseModel):
+    scheduled_start: Optional[str] = None
+    scheduled_end: Optional[str] = None
+
+
+@app.post("/api/djs/{username}/schedule")
+async def set_dj_schedule(username: str, body: ScheduleRequest, request: Request) -> dict:
+    # Purely informational (CONCEPT: "should not enforce any change") --
+    # these times never feed state.resolve() or anything else that decides
+    # who's actually on air. Just a running-order the DJ dashboard renders
+    # as a "live in XY minutes" / end-of-set countdown.
+    require_admin(request)
+    try:
+        app.state.db.set_schedule(username, body.scheduled_start, body.scheduled_end)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="unknown dj")
+    app.state.db.log_event(f"Zeitplan für {username} aktualisiert")
+    await manager.broadcast()
+    return {
+        "username": username,
+        "scheduled_start": body.scheduled_start,
+        "scheduled_end": body.scheduled_end,
+    }
 
 
 class ReadyRequest(BaseModel):
@@ -669,6 +716,45 @@ async def delete_dj(username: str, request: Request) -> dict:
     app.state.db.log_event(f"{username} gelöscht")
     await manager.broadcast()
     return {"username": username, "deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Admin: chat with a DJ (see db.py's messages-table docstring for the
+# sender/acked_at model). Deliberately per-DJ, not a single shared channel --
+# CONCEPT: this is meant for an admin to reach one specific DJ (or vice
+# versa), not a group chat.
+# ---------------------------------------------------------------------------
+
+class MessageRequest(BaseModel):
+    text: str
+
+
+@app.get("/api/admin/messages/{username}")
+async def admin_get_messages(username: str, request: Request) -> list:
+    require_admin(request)
+    if app.state.db.get_dj(username) is None:
+        raise HTTPException(status_code=404, detail="unknown dj")
+    # Opening the thread is what clears that DJ's unread badge -- no
+    # separate "mark read" action needed from the admin's side. Only
+    # broadcast when that badge actually changes: the admin frontend polls
+    # this endpoint every few seconds while a thread is open, and most of
+    # those polls find nothing new to mark read.
+    if app.state.db.unread_dj_message_counts().get(username, 0) > 0:
+        app.state.db.mark_dj_messages_read(username)
+        await manager.broadcast()
+    return app.state.db.list_messages(username)
+
+
+@app.post("/api/admin/messages/{username}")
+async def admin_post_message(username: str, body: MessageRequest, request: Request) -> dict:
+    require_admin(request)
+    try:
+        message = app.state.db.add_message(username, "admin", body.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    app.state.db.log_event(f"Nachricht an {username} gesendet")
+    await manager.broadcast()
+    return message
 
 
 @app.websocket("/ws")
@@ -765,6 +851,76 @@ async def dj_own_stream_stats(request: Request) -> dict:
     )
     stats["history"] = history
     return stats
+
+
+@app.get("/api/dj/me/messages")
+async def dj_get_messages(request: Request) -> list:
+    username = get_identity(request)
+    if app.state.db.get_dj(username) is None:
+        raise HTTPException(status_code=404, detail="unknown dj")
+    return app.state.db.list_messages(username)
+
+
+@app.post("/api/dj/me/messages")
+async def dj_post_message(body: MessageRequest, request: Request) -> dict:
+    username = get_identity(request)
+    try:
+        message = app.state.db.add_message(username, "dj", body.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    app.state.db.log_event(f"Nachricht von {username} erhalten")
+    await manager.broadcast()
+    return message
+
+
+@app.post("/api/dj/me/messages/{message_id}/ack")
+async def dj_ack_message(message_id: int, request: Request) -> dict:
+    # Scoped to (id, this DJ's own username, sender='admin') inside
+    # db.ack_admin_message -- a DJ can only acknowledge admin messages
+    # addressed to themself, never anyone else's or their own outgoing ones.
+    username = get_identity(request)
+    ok = app.state.db.ack_admin_message(message_id, username)
+    if not ok:
+        raise HTTPException(status_code=404, detail="message not found or already acknowledged")
+    await manager.broadcast()
+    return {"id": message_id, "acked": True}
+
+
+# Opt-in live preview for the DJ dashboard (CONCEPT.md issue #2: "option to
+# enable a preview of the current stream"). There is no server-visible
+# "final mixed program" feed to preview -- the LJ's OBS reads each DJ's raw
+# slot straight over RTSP and pushes the actual mix to VRCDN itself,
+# entirely outside this app's view (see lj-controller/ and CONCEPT.md).
+# The closest honest approximation is: whichever slot is currently on_air
+# per this app's own state IS the raw source the LJ's scene is showing, so
+# that slot's HLS output is what gets proxied here -- resolved server-side
+# from state, never from a client-supplied slot, so a DJ can only ever
+# preview whoever is actually on air (including themselves), not an
+# arbitrary slot.
+@app.get("/api/dj/onair-preview/{filename:path}")
+async def dj_onair_preview_proxy(filename: str, request: Request) -> Response:
+    get_identity(request)  # any authenticated DJ, ready or not
+    on_air = app.state.state_manager.on_air
+    if on_air == FILLER:
+        raise HTTPException(status_code=404, detail="kein Live-Signal (Filler läuft)")
+    slot = app.state.db.get_slot(on_air)
+    if not slot:
+        raise HTTPException(status_code=404, detail="kein Live-Signal")
+    url = f"{app.state.mediamtx_hls_base_url}/{slot}/{filename}"
+    query = request.url.query
+    if query:
+        url = f"{url}?{query}"
+    try:
+        resp = await app.state.stats_client.get(
+            url,
+            auth=(app.state.lj_read_username, app.state.lj_read_password),
+            follow_redirects=True,
+            timeout=10.0,
+        )
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="preview unreachable")
+    media_type = resp.headers.get("content-type", "application/octet-stream")
+    return Response(content=resp.content, status_code=resp.status_code, media_type=media_type)
 
 
 @app.websocket("/ws/dj")

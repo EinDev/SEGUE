@@ -42,6 +42,7 @@ window.SegueI18n = (function () {
     "common.connLost": "Verbindung zum Server verloren",
     "common.noData": "keine Daten",
     "common.chartCaption": "aktuell {last}{unit} · letzte 5 Min.: {range}",
+    "common.chartHoverAt": "{value}{unit} um {time}",
 
     // ---- dj page ----
     "dj.title": "SEGUE — DJ",
@@ -189,6 +190,7 @@ window.SegueI18n = (function () {
     "common.connLost": "Connection to server lost",
     "common.noData": "no data",
     "common.chartCaption": "current {last}{unit} · last 5 min: {range}",
+    "common.chartHoverAt": "{value}{unit} at {time}",
 
     // ---- dj page ----
     "dj.title": "SEGUE — DJ",

@@ -375,6 +375,50 @@ nachvollziehen. Beispiele: „Auto: nur Nova verbunden", „Manuell gepinnt auf 
 `warning` wird gesetzt bei: gepinntem DJ offline, mehreren Verbundenen ohne
 klare Auswahl im AUTO-Modus, Verbindung zu MediaMTX tot.
 
+### 6.5 Ergänzungen aus Issue #2 (DJ-Seiten-Überarbeitung)
+
+Rein additiv zu 6.1/6.2 oben, gleiches Auth-Modell (Header von 6.1/6.2, kein
+neues Konzept):
+
+```
+POST   /api/admin/event-name          {name}     → rein kosmetisch, im
+                                                     Zustandsobjekt als
+                                                     "event_name"
+POST   /api/djs/{username}/schedule   {scheduled_start, scheduled_end}
+                                                  → rein informativ (siehe
+                                                     unten), fließt nie in
+                                                     Abschnitt 4 ein
+
+GET    /api/admin/messages/{username}            → Chat-Verlauf mit einem DJ,
+POST   /api/admin/messages/{username} {text}        markiert dessen
+                                                     unread_messages als
+                                                     gelesen (roster)
+GET    /api/dj/me/messages
+POST   /api/dj/me/messages            {text}
+POST   /api/dj/me/messages/{id}/ack              → DJ bestätigt eine
+                                                     Admin-Nachricht
+
+GET    /api/dj/onair-preview/{path...}           → HLS-Proxy wie
+                                                     /api/admin/preview,
+                                                     aber serverseitig immer
+                                                     auf den aktuell on-air
+                                                     geschalteten Slot
+                                                     aufgelöst - eine echte
+                                                     "fertiger Mix"-Vorschau
+                                                     gibt es nicht, da der
+                                                     LJ die Slots direkt per
+                                                     RTSP liest und selbst
+                                                     zu VRCDN pusht, ohne
+                                                     dass dieser Server den
+                                                     Mix je sieht
+```
+
+Der Zeitplan (`scheduled_start`/`scheduled_end`, ISO-Zeitstempel, vom Admin
+pro DJ gesetzt) ist bewusst rein informativ für die "live in XY Minuten"-
+Anzeige auf der DJ-Seite - er beeinflusst `resolve()` (Abschnitt 4) in
+keiner Weise. Der Chat (`messages`-Tabelle, siehe `db.py`) ist bewusst pro
+DJ getrennt, kein gemeinsamer Kanal.
+
 ---
 
 ## 7. Frontend

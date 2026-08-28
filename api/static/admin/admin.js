@@ -29,6 +29,10 @@
   const rosterRowsEl = document.getElementById("roster-rows");
   const eventlogEl = document.getElementById("eventlog");
 
+  const eventNameFormEl = document.getElementById("event-name-form");
+  const eventNameInputEl = document.getElementById("event-name-input");
+  const eventNameSaveBtnEl = document.getElementById("event-name-save-btn");
+
   const diagCpuEl = document.getElementById("diag-cpu");
   const diagRamEl = document.getElementById("diag-ram");
   const diagDiskEl = document.getElementById("diag-disk");
@@ -42,6 +46,7 @@
   const diagErrorsEl = document.getElementById("diag-errors");
 
   let authorized = false;
+  let eventNameDirty = false;
   let rosterError = null; // { username, message } shown inline on that row
   let rosterByUsername = {}; // username -> {username, ready, slot, connected, created_at}
   let lastRosterDjs = [];
@@ -103,6 +108,10 @@
     for (const username of Array.from(detailStatsTimers.keys())) {
       stopDetailStatsPolling(username);
     }
+    for (const username of Array.from(chatPollTimers.keys())) {
+      stopChatPolling(username);
+    }
+    expandedChats.clear();
     stopPolling();
     if (ws) {
       try { ws.close(); } catch (e) { /* ignore */ }
@@ -169,6 +178,12 @@
     modeAutoBtn.classList.toggle("active", state.mode === "AUTO");
     modeManualBtn.classList.toggle("active", state.mode === "MANUAL");
     reasonTextEl.textContent = state.reason || "";
+
+    // Don't clobber text the admin is actively typing (own edit not yet
+    // saved) with a push/poll that raced it.
+    if (!eventNameDirty && document.activeElement !== eventNameInputEl) {
+      eventNameInputEl.value = state.event_name || "";
+    }
 
     if (state.warning) {
       warningBannerEl.classList.remove("hidden");
@@ -515,6 +530,10 @@
     return div.innerHTML;
   }
 
+  // renderRoster rebuilds row *content* but reuses existing row DOM nodes
+  // (keyed by data-username), same reasoning as renderDjRows above -- an
+  // open chat panel or an in-progress schedule edit shouldn't get wiped by
+  // the next 3s poll or debounced roster refresh.
   function renderRoster(djs) {
     lastRosterDjs = djs || [];
     rosterByUsername = {};
@@ -524,85 +543,369 @@
     if (pendingDeleteUsername && !rosterByUsername[pendingDeleteUsername]) {
       pendingDeleteUsername = null; // row is gone (deleted elsewhere) -- drop the armed state
     }
-    rosterRowsEl.innerHTML = "";
     if (lastRosterDjs.length === 0) {
+      for (const username of Array.from(expandedChats)) stopChatPolling(username);
+      expandedChats.clear();
+      rosterRowsEl.innerHTML = "";
       const empty = document.createElement("div");
       empty.className = "text-faint";
       empty.textContent = t("admin.roster.empty");
       rosterRowsEl.appendChild(empty);
       return;
     }
+    const placeholder = rosterRowsEl.querySelector(".text-faint");
+    if (placeholder) placeholder.remove();
+
+    const seen = new Set();
     for (const dj of lastRosterDjs) {
-      const row = document.createElement("div");
-      row.className = "roster-row";
-
-      const name = document.createElement("div");
-      name.className = "username";
-      name.textContent = dj.username;
-
-      const pill = document.createElement("span");
-      pill.className = "pill " + (dj.connected ? "pill-connected" : "pill-disconnected");
-      pill.textContent = dj.connected ? t("common.connected") : t("common.disconnected");
-
-      const slot = document.createElement("div");
-      slot.className = "slot";
-      slot.textContent = dj.slot || "";
-
-      const spacer = document.createElement("div");
-      spacer.className = "spacer";
-
-      row.appendChild(name);
-      row.appendChild(pill);
-      row.appendChild(slot);
-      row.appendChild(spacer);
-
-      if (pendingDeleteUsername === dj.username) {
-        const confirmText = document.createElement("span");
-        confirmText.className = "confirm-text";
-        confirmText.textContent = t("admin.roster.confirmDelete");
-
-        const yes = document.createElement("button");
-        yes.className = "confirm-yes-btn";
-        yes.textContent = t("admin.roster.confirmYes");
-        yes.addEventListener("click", () => deleteDj(dj.username));
-
-        const no = document.createElement("button");
-        no.className = "confirm-no-btn";
-        no.textContent = t("admin.roster.confirmNo");
-        no.addEventListener("click", () => {
-          pendingDeleteUsername = null;
-          renderRoster(lastRosterDjs);
-        });
-
-        row.appendChild(confirmText);
-        row.appendChild(yes);
-        row.appendChild(no);
-      } else {
-        const toggle = document.createElement("button");
-        toggle.className = "ready-toggle" + (dj.ready ? " on" : "");
-        toggle.textContent = dj.ready ? t("admin.roster.ready") : t("admin.roster.notReady");
-        toggle.addEventListener("click", () => setReady(dj.username, !dj.ready));
-
-        const del = document.createElement("button");
-        del.className = "delete-btn";
-        del.textContent = t("admin.roster.delete");
-        del.addEventListener("click", () => {
-          pendingDeleteUsername = dj.username;
-          renderRoster(lastRosterDjs);
-        });
-
-        row.appendChild(toggle);
-        row.appendChild(del);
+      seen.add(dj.username);
+      let row = findRosterRow(dj.username);
+      if (!row) {
+        row = buildRosterRow(dj.username);
+        rosterRowsEl.appendChild(row);
       }
+      updateRosterRow(row, dj);
+    }
+    for (const row of Array.from(rosterRowsEl.querySelectorAll(".roster-row"))) {
+      if (!seen.has(row.dataset.username)) {
+        stopChatPolling(row.dataset.username);
+        expandedChats.delete(row.dataset.username);
+        row.remove();
+      }
+    }
+  }
 
-      if (rosterError && rosterError.username === dj.username) {
-        const err = document.createElement("div");
+  function findRosterRow(username) {
+    for (const row of rosterRowsEl.querySelectorAll(".roster-row")) {
+      if (row.dataset.username === username) return row;
+    }
+    return null;
+  }
+
+  function buildRosterRow(username) {
+    const row = document.createElement("div");
+    row.className = "roster-row";
+    row.dataset.username = username;
+
+    const name = document.createElement("div");
+    name.className = "username";
+    name.textContent = username;
+
+    const pill = document.createElement("span");
+    pill.className = "pill";
+
+    const slot = document.createElement("div");
+    slot.className = "slot";
+
+    const spacer = document.createElement("div");
+    spacer.className = "spacer";
+
+    const chatToggle = document.createElement("button");
+    chatToggle.className = "chat-toggle-btn";
+    chatToggle.addEventListener("click", () => toggleChat(username, row));
+
+    const actions = document.createElement("span");
+    actions.className = "roster-actions";
+
+    row.appendChild(name);
+    row.appendChild(pill);
+    row.appendChild(slot);
+    row.appendChild(spacer);
+    row.appendChild(chatToggle);
+    row.appendChild(actions);
+
+    const scheduleRow = document.createElement("div");
+    scheduleRow.className = "schedule-row";
+    scheduleRow.innerHTML =
+      '<span>Läuft:</span>' +
+      '<input type="datetime-local" class="schedule-start">' +
+      '<span>bis</span>' +
+      '<input type="datetime-local" class="schedule-end">' +
+      '<button class="schedule-save-btn">Speichern</button>';
+    scheduleRow
+      .querySelector(".schedule-save-btn")
+      .addEventListener("click", () => saveSchedule(username, row));
+    row.appendChild(scheduleRow);
+
+    const chatPanel = document.createElement("div");
+    chatPanel.className = "roster-chat hidden";
+
+    const chatMessagesWrap = document.createElement("div");
+    chatMessagesWrap.className = "roster-chat-messages";
+
+    const chatForm = document.createElement("form");
+    chatForm.className = "roster-chat-form";
+
+    const chatInput = document.createElement("input");
+    chatInput.type = "text";
+    chatInput.className = "roster-chat-input";
+    // Set via the DOM API, not an interpolated HTML string -- a
+    // self-registered username can contain characters (e.g. `"`) that
+    // would otherwise break out of an attribute in an innerHTML template.
+    chatInput.placeholder = `Nachricht an ${username}…`;
+    chatInput.maxLength = 500;
+    chatInput.autocomplete = "off";
+
+    const chatSendBtn = document.createElement("button");
+    chatSendBtn.type = "submit";
+    chatSendBtn.className = "roster-chat-send-btn";
+    chatSendBtn.textContent = "Senden";
+
+    chatForm.appendChild(chatInput);
+    chatForm.appendChild(chatSendBtn);
+    chatForm.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      sendAdminMessage(username, row);
+    });
+
+    chatPanel.appendChild(chatMessagesWrap);
+    chatPanel.appendChild(chatForm);
+    row.appendChild(chatPanel);
+
+    return row;
+  }
+
+  function updateRosterRow(row, dj) {
+    row.querySelector(".username").textContent = dj.username;
+
+    const pill = row.querySelector(".pill");
+    pill.className = "pill " + (dj.connected ? "pill-connected" : "pill-disconnected");
+    pill.textContent = dj.connected ? t("common.connected") : t("common.disconnected");
+
+    row.querySelector(".slot").textContent = dj.slot || "";
+
+    const chatToggle = row.querySelector(".chat-toggle-btn");
+    const isOpen = expandedChats.has(dj.username);
+    chatToggle.innerHTML = "";
+    chatToggle.appendChild(
+      document.createTextNode(isOpen ? "Nachrichten ausblenden" : "Nachrichten")
+    );
+    if (dj.unread_messages) {
+      const badge = document.createElement("span");
+      badge.className = "unread-badge";
+      badge.textContent = String(dj.unread_messages);
+      chatToggle.appendChild(document.createTextNode(" "));
+      chatToggle.appendChild(badge);
+    }
+    row.querySelector(".roster-chat").classList.toggle("hidden", !isOpen);
+
+    // Schedule inputs: only overwrite from server data while the admin
+    // isn't actively editing that exact field (same reasoning as the
+    // event-name input above).
+    const startInput = row.querySelector(".schedule-start");
+    const endInput = row.querySelector(".schedule-end");
+    if (document.activeElement !== startInput) {
+      startInput.value = isoToLocalInput(dj.scheduled_start);
+    }
+    if (document.activeElement !== endInput) {
+      endInput.value = isoToLocalInput(dj.scheduled_end);
+    }
+
+    const actions = row.querySelector(".roster-actions");
+    actions.innerHTML = "";
+    if (pendingDeleteUsername === dj.username) {
+      const confirmText = document.createElement("span");
+      confirmText.className = "confirm-text";
+      confirmText.textContent = t("admin.roster.confirmDelete");
+
+      const yes = document.createElement("button");
+      yes.className = "confirm-yes-btn";
+      yes.textContent = t("admin.roster.confirmYes");
+      yes.addEventListener("click", () => deleteDj(dj.username));
+
+      const no = document.createElement("button");
+      no.className = "confirm-no-btn";
+      no.textContent = t("admin.roster.confirmNo");
+      no.addEventListener("click", () => {
+        pendingDeleteUsername = null;
+        renderRoster(lastRosterDjs);
+      });
+
+      actions.appendChild(confirmText);
+      actions.appendChild(yes);
+      actions.appendChild(no);
+    } else {
+      const toggle = document.createElement("button");
+      toggle.className = "ready-toggle" + (dj.ready ? " on" : "");
+      toggle.textContent = dj.ready ? t("admin.roster.ready") : t("admin.roster.notReady");
+      toggle.addEventListener("click", () => setReady(dj.username, !dj.ready));
+
+      const del = document.createElement("button");
+      del.className = "delete-btn";
+      del.textContent = t("admin.roster.delete");
+      del.addEventListener("click", () => {
+        pendingDeleteUsername = dj.username;
+        renderRoster(lastRosterDjs);
+      });
+
+      actions.appendChild(toggle);
+      actions.appendChild(del);
+    }
+
+    let err = row.querySelector(".roster-error");
+    if (rosterError && rosterError.username === dj.username) {
+      if (!err) {
+        err = document.createElement("div");
         err.className = "roster-error";
-        err.textContent = rosterError.message;
         row.appendChild(err);
       }
+      err.textContent = rosterError.message;
+    } else if (err) {
+      err.remove();
+    }
+  }
 
-      rosterRowsEl.appendChild(row);
+  // ---- Per-DJ schedule (purely informational running-order times -- see
+  // db.set_schedule / app.main's /api/djs/{username}/schedule) ----
+
+  function isoToLocalInput(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const pad = (n) => String(n).padStart(2, "0");
+    return (
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T` +
+      `${pad(d.getHours())}:${pad(d.getMinutes())}`
+    );
+  }
+
+  function localInputToIso(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+
+  async function saveSchedule(username, row) {
+    const startVal = row.querySelector(".schedule-start").value;
+    const endVal = row.querySelector(".schedule-end").value;
+    try {
+      await authedFetch(`/api/djs/${encodeURIComponent(username)}/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scheduled_start: localInputToIso(startVal),
+          scheduled_end: localInputToIso(endVal),
+        }),
+      });
+    } catch (e) { /* handled via authedFetch */ }
+    fetchRoster();
+  }
+
+  // ---- Per-DJ chat (see db.py's messages-table docstring) ----
+
+  const expandedChats = new Set(); // usernames with the chat panel open
+  const chatPollTimers = new Map(); // username -> intervalId
+  const CHAT_POLL_INTERVAL_MS = 5000;
+
+  function toggleChat(username, row) {
+    if (expandedChats.has(username)) {
+      expandedChats.delete(username);
+      stopChatPolling(username);
+    } else {
+      expandedChats.add(username);
+      startChatPolling(username, row);
+    }
+    if (latestAdminState) updateRosterRow(row, rosterByUsername[username]);
+  }
+
+  function startChatPolling(username, row) {
+    if (chatPollTimers.has(username)) return;
+    const tick = () => fetchAndRenderChat(username, row);
+    tick();
+    chatPollTimers.set(username, setInterval(tick, CHAT_POLL_INTERVAL_MS));
+  }
+
+  function stopChatPolling(username) {
+    const timer = chatPollTimers.get(username);
+    if (timer) clearInterval(timer);
+    chatPollTimers.delete(username);
+  }
+
+  async function fetchAndRenderChat(username, row) {
+    let resp;
+    try {
+      resp = await authedFetch(`/api/admin/messages/${encodeURIComponent(username)}`);
+    } catch (e) {
+      return;
+    }
+    let messages = null;
+    try {
+      messages = await resp.json();
+    } catch (e) {
+      return;
+    }
+    renderRosterChat(row, messages);
+  }
+
+  function renderRosterChat(row, messages) {
+    const wrap = row.querySelector(".roster-chat-messages");
+    if (!wrap) return;
+    // Don't yank the scroll position/focus out from under an admin who's
+    // mid-scroll reading history -- only rebuild when something actually
+    // changed. A plain count comparison would miss a DJ acking an earlier
+    // admin message (same message count, only acked_at flips), which is
+    // exactly the ack-status update this panel exists to show -- so the
+    // fingerprint includes ack state, not just which ids are present.
+    const key = (messages || []).map((m) => `${m.id}${m.acked_at ? "a" : "u"}`).join(",");
+    if (key === wrap.dataset.key) return;
+    wrap.dataset.key = key;
+    wrap.innerHTML = "";
+    if (!messages || messages.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-faint";
+      empty.textContent = "Noch keine Nachrichten.";
+      wrap.appendChild(empty);
+      return;
+    }
+    for (const msg of messages) {
+      const bubble = document.createElement("div");
+      bubble.className =
+        "roster-chat-msg " +
+        (msg.sender === "admin" ? "roster-chat-msg-from-admin" : "roster-chat-msg-from-dj");
+      bubble.textContent = msg.text;
+      const meta = document.createElement("span");
+      meta.className = "roster-chat-msg-meta";
+      const who = msg.sender === "admin" ? "Du" : "DJ";
+      if (msg.sender === "admin") {
+        meta.textContent = `${who}, ${formatChatTime(msg.created_at)}` + (msg.acked_at ? " · bestätigt" : " · noch nicht bestätigt");
+        if (msg.acked_at) meta.classList.add("acked");
+      } else {
+        meta.textContent = `${who}, ${formatChatTime(msg.created_at)}`;
+      }
+      bubble.appendChild(meta);
+      wrap.appendChild(bubble);
+    }
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  function formatChatTime(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+
+  async function sendAdminMessage(username, row) {
+    const input = row.querySelector(".roster-chat-input");
+    const text = input.value.trim();
+    if (!text) return;
+    const btn = row.querySelector(".roster-chat-send-btn");
+    btn.disabled = true;
+    try {
+      await authedFetch(`/api/admin/messages/${encodeURIComponent(username)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      input.value = "";
+      // Force a re-render even if the fingerprint happens to match
+      // (shouldn't, but be defensive) by resetting the seen-state marker.
+      row.querySelector(".roster-chat-messages").dataset.key = "";
+      await fetchAndRenderChat(username, row);
+    } catch (e) { /* handled via authedFetch */ } finally {
+      btn.disabled = false;
     }
   }
 
@@ -899,6 +1202,27 @@
     try {
       await authedFetch("/api/filler", { method: "POST" });
     } catch (e) { /* handled via authedFetch */ }
+  });
+
+  eventNameInputEl.addEventListener("input", () => {
+    eventNameDirty = true;
+    eventNameSaveBtnEl.classList.add("dirty");
+  });
+
+  eventNameFormEl.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      await authedFetch("/api/admin/event-name", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: eventNameInputEl.value }),
+      });
+    } catch (e) {
+      return; // handled via authedFetch; keep the dirty flag so nothing is lost
+    }
+    eventNameDirty = false;
+    eventNameSaveBtnEl.classList.remove("dirty");
+    eventNameInputEl.blur();
   });
 
   // ---- Fetch / polling / WS plumbing ----
