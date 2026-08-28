@@ -293,3 +293,23 @@ a {
 .chart-dot.chart-line--cpu { fill: var(--blue); }
 .chart-dot.chart-line--ram { fill: var(--green); }
 .chart-dot.chart-line--network { fill: var(--amber); }
+
+/* Hover/touch readout (see shared_chart.js's attachHoverReadout) */
+.chart-svg-wrap svg { touch-action: pan-y; cursor: crosshair; }
+.chart-hover-line {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.chart-hover-dot {
+  stroke: var(--bg);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.chart-hover-dot.chart-line--bitrate { fill: var(--blue); }
+.chart-hover-dot.chart-line--delay { fill: var(--amber); }
+.chart-hover-dot.chart-line--cpu { fill: var(--blue); }
+.chart-hover-dot.chart-line--ram { fill: var(--green); }
+.chart-hover-dot.chart-line--network { fill: var(--amber); }

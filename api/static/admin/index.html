@@ -52,6 +52,37 @@
     gap: 0.5em;
   }
 
+  .event-name-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    flex-wrap: wrap;
+  }
+  .event-name-label {
+    color: var(--text-dim);
+    font-weight: 700;
+    font-size: 0.9em;
+  }
+  #event-name-form {
+    display: flex;
+    gap: 0.4em;
+    flex: 1 1 16em;
+  }
+  #event-name-input {
+    flex: 1 1 auto;
+    min-width: 8em;
+    font-family: inherit;
+    padding: 0.3em 0.6em;
+  }
+  #event-name-save-btn {
+    padding: 0.3em 0.8em;
+    font-size: 0.9em;
+  }
+  #event-name-save-btn.dirty {
+    background: var(--blue);
+    color: #fff;
+  }
+
   header.top-bar {
     display: flex;
     flex-wrap: wrap;
@@ -266,6 +297,95 @@
     font-size: 0.85em;
     flex-basis: 100%;
   }
+  .unread-badge {
+    background: var(--red);
+    color: #fff;
+    border-radius: 999px;
+    font-size: 0.78em;
+    font-weight: 800;
+    padding: 0.1em 0.5em;
+    line-height: 1.4;
+  }
+  .chat-toggle-btn {
+    background: var(--bg-raised-2);
+    font-size: 0.85em;
+    padding: 0.3em 0.7em;
+  }
+  .schedule-row {
+    flex-basis: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    flex-wrap: wrap;
+    font-size: 0.85em;
+    color: var(--text-dim);
+    margin-top: 0.1em;
+  }
+  .schedule-row input[type="datetime-local"] {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 0.25em 0.4em;
+  }
+  .schedule-save-btn {
+    font-size: 0.85em;
+    padding: 0.25em 0.6em;
+  }
+  .roster-chat {
+    flex-basis: 100%;
+    margin-top: 0.5em;
+    padding-top: 0.5em;
+    border-top: 1px solid var(--border);
+  }
+  .roster-chat.hidden { display: none; }
+  .roster-chat-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35em;
+    max-height: 220px;
+    overflow-y: auto;
+    margin-bottom: 0.6em;
+    font-size: 0.9em;
+  }
+  .roster-chat-msg {
+    max-width: 85%;
+    padding: 0.4em 0.7em;
+    border-radius: 8px;
+    overflow-wrap: anywhere;
+  }
+  .roster-chat-msg-from-dj {
+    align-self: flex-start;
+    background: var(--bg-raised-2);
+  }
+  .roster-chat-msg-from-admin {
+    align-self: flex-end;
+    background: var(--blue-bg);
+    color: #cfe0ff;
+  }
+  .roster-chat-msg-meta {
+    display: block;
+    font-size: 0.75em;
+    color: var(--text-faint);
+    margin-top: 0.2em;
+  }
+  .roster-chat-msg-meta.acked { color: var(--green); }
+  .roster-chat-form {
+    display: flex;
+    gap: 0.4em;
+  }
+  .roster-chat-form input[type="text"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: inherit;
+    padding: 0.3em 0.6em;
+  }
+  .roster-chat-send-btn {
+    font-size: 0.9em;
+    padding: 0.3em 0.8em;
+  }
   .delete-btn {
     background: var(--bg);
     color: var(--red);
@@ -394,6 +514,14 @@
 </div>
 
 <div id="app" class="hidden">
+  <div class="event-name-row">
+    <span class="event-name-label">Event:</span>
+    <form id="event-name-form">
+      <input type="text" id="event-name-input" placeholder="kein Eventname gesetzt" maxlength="100">
+      <button type="submit" id="event-name-save-btn">Speichern</button>
+    </form>
+  </div>
+
   <header class="top-bar">
     <div class="mode-toggle">
       <button id="mode-auto-btn" class="mode-auto">AUTO</button>

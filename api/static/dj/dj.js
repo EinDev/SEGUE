@@ -18,11 +18,15 @@
   const tallyEl = document.getElementById("tally");
   const tallyLabelEl = document.getElementById("tally-label");
   const tallyNameEl = document.getElementById("tally-name");
+  const eventNameEl = document.getElementById("event-name");
   const liveNowEl = document.getElementById("live-now");
-  const otherDjsListEl = document.getElementById("other-djs-list");
+  const djListItemsEl = document.getElementById("dj-list-items");
+  const ackBannerEl = document.getElementById("ack-banner");
+  const setupDetailsEl = document.getElementById("setup-details");
 
   let latestState = null;
   let deniedHard = false; // true only on 401 (no identity at all) -- not retried
+  let setupUserToggled = false; // stop auto-collapsing once the DJ has touched it themself
 
   // ---- Connection resilience state ----
   let ws = null;
@@ -79,6 +83,7 @@
   }
 
   function render(state) {
+    const wasConnected = latestState ? latestState.dj.connected : null;
     latestState = state;
     const dj = state.dj;
 
@@ -105,9 +110,26 @@
     }
     tallyNameEl.textContent = dj.username || "";
 
+    if (state.event_name) {
+      eventNameEl.textContent = state.event_name;
+      eventNameEl.classList.remove("hidden");
+    } else {
+      eventNameEl.classList.add("hidden");
+    }
+
     renderLiveNow(state);
-    renderOtherDjs(state);
+    renderDjList(state);
     renderCredentials(dj.credentials);
+    renderAckBanner(state.unacked_messages);
+    renderPreviewAvailability(state);
+
+    // Stream-setup starts collapsed once the DJ is actually connected (the
+    // common mid-event case: they don't need their own credentials again)
+    // and open otherwise (they likely still need them) -- but only until
+    // the DJ manually opens/closes it themself, see setupUserToggled.
+    if (!setupUserToggled && wasConnected !== dj.connected) {
+      setupDetailsEl.open = !dj.connected;
+    }
 
     if (dj.connected) {
       startStreamStatsPolling();
@@ -115,6 +137,15 @@
       stopStreamStatsPolling();
     }
   }
+
+  // A click on <summary> is always a real user interaction (unlike the
+  // `toggle` event, which some browsers also fire for a script-driven
+  // `.open = ...` assignment) -- this is what should stop the
+  // auto-collapse/expand logic above from overriding the DJ's own choice.
+  const setupSummaryEl = setupDetailsEl.querySelector("summary");
+  setupSummaryEl.addEventListener("click", () => {
+    setupUserToggled = true;
+  });
 
   function renderLiveNow(state) {
     const onAirUsername = state.on_air;
@@ -135,6 +166,7 @@
   }
 
   function tickSince() {
+    tickSchedules();
     if (!latestState) return;
     const iso = liveNowEl.dataset.sinceIso;
     const suffix = document.getElementById("live-since-suffix");
@@ -147,26 +179,153 @@
     suffix.textContent = `— seit ${m}m ${s}s`;
   }
 
-  function renderOtherDjs(state) {
+  // Running order: self (marked "DU") plus every other ready DJ, each with
+  // the admin-set schedule if there is one -- purely informational (see
+  // db.set_schedule), rendered client-side as a live-updating "in X Min."
+  // countdown by tickSchedules() below rather than a fixed timestamp.
+  function renderDjList(state) {
     const selfUsername = state.dj ? state.dj.username : null;
-    const others = (state.djs || []).filter((d) => d.username !== selfUsername);
-    otherDjsListEl.innerHTML = "";
-    if (others.length === 0) {
+    const djs = state.djs || [];
+    djListItemsEl.innerHTML = "";
+    if (djs.length === 0) {
       const li = document.createElement("li");
-      li.textContent = "Keine weiteren freigeschalteten DJs.";
-      otherDjsListEl.appendChild(li);
+      li.textContent = "Keine freigeschalteten DJs.";
+      djListItemsEl.appendChild(li);
       return;
     }
-    for (const d of others) {
+    for (const d of djs) {
+      const isSelf = d.username === selfUsername;
       const li = document.createElement("li");
+      li.className = isSelf ? "self" : "";
+
+      const nameWrap = document.createElement("div");
+      nameWrap.className = "dj-list-name-wrap";
       const nameSpan = document.createElement("span");
       nameSpan.textContent = d.username;
+      nameWrap.appendChild(nameSpan);
+      if (isSelf) {
+        const tag = document.createElement("span");
+        tag.className = "you-tag";
+        tag.textContent = "DU";
+        nameWrap.appendChild(tag);
+      }
+
       const pill = document.createElement("span");
       pill.className = "pill " + (d.connected ? "pill-connected" : "pill-disconnected");
       pill.textContent = d.connected ? "verbunden" : "nicht verbunden";
-      li.appendChild(nameSpan);
+
+      li.appendChild(nameWrap);
       li.appendChild(pill);
-      otherDjsListEl.appendChild(li);
+
+      if (d.scheduled_start || d.scheduled_end) {
+        const schedule = document.createElement("span");
+        schedule.className = "schedule-text";
+        schedule.dataset.start = d.scheduled_start || "";
+        schedule.dataset.end = d.scheduled_end || "";
+        schedule.textContent = formatSchedule(d.scheduled_start, d.scheduled_end);
+        li.appendChild(schedule);
+      }
+
+      djListItemsEl.appendChild(li);
+    }
+  }
+
+  // Purely informational countdown text, recomputed every tick (see
+  // tickSince below, which now also drives this) -- never influences
+  // on-air switching, which stays entirely connection-driven.
+  function formatSchedule(startIso, endIso) {
+    const now = Date.now();
+    const parts = [];
+    if (startIso) {
+      const start = new Date(startIso).getTime();
+      if (!Number.isNaN(start)) {
+        if (start > now) {
+          parts.push(`Live in ca. ${formatMinutes(start - now)}`);
+        } else if (!endIso || new Date(endIso).getTime() > now) {
+          parts.push("Sollte jetzt live sein");
+        }
+      }
+    }
+    if (endIso) {
+      const end = new Date(endIso).getTime();
+      if (!Number.isNaN(end)) {
+        if (end > now) {
+          parts.push(`Ende in ca. ${formatMinutes(end - now)}`);
+        } else {
+          parts.push("Sollte beendet sein");
+        }
+      }
+    }
+    return parts.join(" · ");
+  }
+
+  function formatMinutes(deltaMs) {
+    const totalMin = Math.max(0, Math.round(deltaMs / 60000));
+    if (totalMin < 60) return `${totalMin} Min.`;
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return `${h}h ${m}min`;
+  }
+
+  function tickSchedules() {
+    for (const el of djListItemsEl.querySelectorAll(".schedule-text")) {
+      el.textContent = formatSchedule(el.dataset.start || null, el.dataset.end || null);
+    }
+  }
+
+  // ---- Forced-acknowledgment banner for unread admin messages (see
+  // db.py's messages-table docstring). Deliberately not a modal: the rest
+  // of the page stays usable, but the banner is hard to miss and pulses
+  // until every message is individually acknowledged. ----
+
+  function renderAckBanner(unackedMessages) {
+    const messages = unackedMessages || [];
+    if (messages.length === 0) {
+      ackBannerEl.classList.add("hidden");
+      ackBannerEl.innerHTML = "";
+      return;
+    }
+    ackBannerEl.classList.remove("hidden");
+    ackBannerEl.innerHTML = "";
+    for (const msg of messages) {
+      const item = document.createElement("div");
+      item.className = "ack-item";
+
+      const text = document.createElement("div");
+      text.className = "ack-item-text";
+      const label = document.createElement("span");
+      label.className = "ack-item-label";
+      label.textContent = "Nachricht vom Betreiber";
+      text.appendChild(label);
+      text.appendChild(document.createTextNode(msg.text));
+
+      const btn = document.createElement("button");
+      btn.className = "ack-item-btn";
+      btn.textContent = "Verstanden";
+      btn.addEventListener("click", () => ackMessage(msg.id, btn));
+
+      item.appendChild(text);
+      item.appendChild(btn);
+      ackBannerEl.appendChild(item);
+    }
+  }
+
+  async function ackMessage(id, btn) {
+    btn.disabled = true;
+    try {
+      await fetch(`/api/dj/me/messages/${encodeURIComponent(id)}/ack`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+    } catch (e) {
+      btn.disabled = false;
+      return;
+    }
+    // Optimistic local update -- the next state push (triggered
+    // server-side by the ack call itself) will confirm/reconcile this.
+    if (latestState && latestState.unacked_messages) {
+      latestState.unacked_messages = latestState.unacked_messages.filter((m) => m.id !== id);
+      renderAckBanner(latestState.unacked_messages);
     }
   }
 
@@ -306,6 +465,156 @@
     renderStreamKeyField();
   });
 
+  // ---- Live preview (opt-in only -- see /api/dj/onair-preview in
+  // app.main for exactly what this shows and why it's the raw on-air slot
+  // rather than a true "final mix": there is no server-visible final-mix
+  // feed, the LJ's OBS reads slots directly and pushes the actual mix to
+  // VRCDN outside this app entirely) ----
+
+  const previewToggleBtn = document.getElementById("preview-toggle-btn");
+  const previewWrapEl = document.getElementById("preview-wrap");
+  const previewVideoEl = document.getElementById("preview-video");
+  const previewUnavailableEl = document.getElementById("preview-unavailable");
+  let previewActive = null; // Hls instance, `true` for native HLS, or null
+
+  function renderPreviewAvailability(state) {
+    const available = !!state.on_air && state.on_air !== "FILLER";
+    if (!available && previewActive) {
+      // The on-air DJ dropped out from under an active preview -- tear it
+      // down rather than leave a player spinning on a now-dead source.
+      stopPreview();
+    }
+    previewToggleBtn.disabled = !available && !previewActive;
+    previewUnavailableEl.classList.toggle("hidden", available);
+  }
+
+  previewToggleBtn.addEventListener("click", () => {
+    if (previewActive) {
+      stopPreview();
+    } else {
+      startPreview();
+    }
+  });
+
+  function startPreview() {
+    previewWrapEl.classList.remove("hidden");
+    previewToggleBtn.textContent = "Vorschau deaktivieren";
+    const src = "/api/dj/onair-preview/index.m3u8";
+
+    if (window.Hls && window.Hls.isSupported()) {
+      const hls = new window.Hls({ lowLatencyMode: true });
+      hls.loadSource(src);
+      hls.attachMedia(previewVideoEl);
+      previewVideoEl.play().catch(() => {});
+      previewActive = hls;
+    } else if (previewVideoEl.canPlayType("application/vnd.apple.mpegurl")) {
+      previewVideoEl.src = src;
+      previewVideoEl.play().catch(() => {});
+      previewActive = true;
+    } else {
+      previewWrapEl.textContent = "Vorschau in diesem Browser nicht unterstützt.";
+      previewActive = true; // still "on" so the toggle button can turn it back off
+    }
+  }
+
+  function stopPreview() {
+    if (previewActive && previewActive !== true && typeof previewActive.destroy === "function") {
+      previewActive.destroy();
+    }
+    previewActive = null;
+    previewWrapEl.classList.add("hidden");
+    previewVideoEl.removeAttribute("src");
+    previewVideoEl.load();
+    previewToggleBtn.textContent = "Vorschau aktivieren";
+  }
+
+  // ---- Chat with the operator (see db.py's messages-table docstring).
+  // Own-thread history, independent of the forced-ack banner above (which
+  // only ever shows *unacknowledged* admin messages) -- this shows the
+  // full back-and-forth, acked or not. ----
+
+  const chatMessagesEl = document.getElementById("chat-messages");
+  const chatFormEl = document.getElementById("chat-form");
+  const chatInputEl = document.getElementById("chat-input");
+  const chatSendBtnEl = document.getElementById("chat-send-btn");
+
+  function renderChat(messages) {
+    chatMessagesEl.innerHTML = "";
+    if (!messages || messages.length === 0) {
+      const empty = document.createElement("div");
+      empty.id = "chat-empty";
+      empty.textContent = "Noch keine Nachrichten.";
+      chatMessagesEl.appendChild(empty);
+      return;
+    }
+    for (const msg of messages) {
+      const bubble = document.createElement("div");
+      bubble.className = "chat-msg " + (msg.sender === "dj" ? "chat-msg-from-dj" : "chat-msg-from-admin");
+      bubble.textContent = msg.text;
+      const meta = document.createElement("span");
+      meta.className = "chat-msg-meta";
+      const who = msg.sender === "dj" ? "Du" : "Betreiber";
+      const ackNote =
+        msg.sender === "admin" && msg.acked_at
+          ? " · gelesen"
+          : "";
+      meta.textContent = `${who}, ${formatChatTime(msg.created_at)}${ackNote}`;
+      if (ackNote) meta.classList.add("chat-msg-ack");
+      bubble.appendChild(meta);
+      chatMessagesEl.appendChild(bubble);
+    }
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  }
+
+  function formatChatTime(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+
+  async function fetchChat() {
+    let resp;
+    try {
+      resp = await fetch("/api/dj/me/messages", { credentials: "same-origin" });
+    } catch (e) {
+      return;
+    }
+    if (!resp.ok) return;
+    try {
+      renderChat(await resp.json());
+    } catch (e) {
+      // non-fatal, chat is secondary
+    }
+  }
+
+  chatFormEl.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const text = chatInputEl.value.trim();
+    if (!text) return;
+    chatSendBtnEl.disabled = true;
+    try {
+      await fetch("/api/dj/me/messages", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      chatInputEl.value = "";
+      await fetchChat();
+    } catch (e) {
+      // leave the text in the input so nothing typed is lost
+    } finally {
+      chatSendBtnEl.disabled = false;
+    }
+  });
+
+  const CHAT_POLL_INTERVAL_MS = 6000;
+  setInterval(() => {
+    if (!deniedHard && latestState && latestState.dj && latestState.dj.ready) fetchChat();
+  }, CHAT_POLL_INTERVAL_MS);
+
   // ---- Fetch / polling / WS plumbing ----
 
   async function fetchStateOnce() {
@@ -405,6 +714,7 @@
     if (!deniedHard) {
       startPolling(); // active until WS confirms it's up
       connectWs();
+      fetchChat();
     }
   });
 

@@ -4,12 +4,23 @@ Plain synchronous stdlib sqlite3 -- this tool has very low concurrency (one
 admin, a handful of DJs), so a lightweight synchronous wrapper is plenty.
 
 Tables:
-  settings  -- single row holding the persisted "intentions": mode, pinned
+  settings  -- single row holding the persisted "intentions": mode, pinned,
+               event_name (purely cosmetic, shown on both dashboards).
   djs       -- self-registered DJs: username -> password/ready/slot. Rows
                are created lazily on first login (see app.main's identity
-               dependency), never by a static config file.
+               dependency), never by a static config file. Also carries an
+               optional scheduled_start/scheduled_end (ISO timestamps) the
+               admin can set for a running-order display -- purely
+               informational, never enforced against who's actually live.
   eventlog  -- append-only log of connect/disconnect, mode/pin changes,
                on_air switches, etc.
+  messages  -- admin<->DJ chat, one row per message. `sender` is which side
+               *sent* it ('admin' or 'dj'); `acked_at` is set once the
+               *other* side has acknowledged/read it -- for an admin
+               message that means the DJ explicitly tapped "verstanden"
+               (CONCEPT: this needs to be hard to miss, not just another
+               feed entry); for a DJ message it just means the admin has
+               opened that DJ's thread.
 
 Slot assignment: only a `ready` DJ ever holds a non-null `slot`. Flipping a
 DJ to ready picks the lowest-numbered free slot among `slot1..slot{max}`;
@@ -82,7 +93,36 @@ class Database:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dj_username TEXT NOT NULL,
+                    sender TEXT NOT NULL CHECK (sender IN ('admin', 'dj')),
+                    text TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    acked_at TEXT
+                )
+                """
+            )
+            # Additive migrations for columns introduced after the tables
+            # above first shipped -- plain ALTER TABLE ADD COLUMN has no
+            # "IF NOT EXISTS" in sqlite, so check PRAGMA table_info first.
+            # Existing deployments' onair.db gets these transparently on
+            # next startup; a fresh DB gets them via INSERT/UPDATE below
+            # doing nothing (columns are NULL by default already).
+            self._ensure_columns(conn, "settings", [("event_name", "TEXT")])
+            self._ensure_columns(
+                conn, "djs", [("scheduled_start", "TEXT"), ("scheduled_end", "TEXT")]
+            )
             conn.commit()
+
+    @staticmethod
+    def _ensure_columns(conn: sqlite3.Connection, table: str, columns: List[tuple]) -> None:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, coltype in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {coltype}")
 
     # -- settings (mode / pinned) ---------------------------------------
 
@@ -98,6 +138,17 @@ class Database:
             conn.execute(
                 "UPDATE settings SET mode = ?, pinned = ? WHERE id = 1", (mode, pinned)
             )
+            conn.commit()
+
+    def get_event_name(self) -> Optional[str]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT event_name FROM settings WHERE id = 1").fetchone()
+            return row["event_name"] if row else None
+
+    def set_event_name(self, name: Optional[str]) -> None:
+        name = (name or "").strip() or None
+        with self._connect() as conn:
+            conn.execute("UPDATE settings SET event_name = ? WHERE id = 1", (name,))
             conn.commit()
 
     # -- djs --------------------------------------------------------------
@@ -126,6 +177,8 @@ class Database:
                 "ready": 0,
                 "slot": None,
                 "created_at": _iso_now(),
+                "scheduled_start": None,
+                "scheduled_end": None,
             }
 
     def get_dj(self, username: str) -> Optional[dict]:
@@ -207,16 +260,35 @@ class Database:
             conn.commit()
             return free_slot
 
+    def set_schedule(
+        self, username: str, scheduled_start: Optional[str], scheduled_end: Optional[str]
+    ) -> None:
+        """Purely informational running-order times for the DJ dashboard's
+        "live in XY minutes" / end-of-set display -- never read by
+        state.resolve() or anything else that decides who's actually on
+        air. `None` clears a field."""
+        if self.get_dj(username) is None:
+            raise ValueError(f"unknown dj: {username!r}")
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE djs SET scheduled_start = ?, scheduled_end = ? WHERE username = ?",
+                (scheduled_start, scheduled_end, username),
+            )
+            conn.commit()
+
     def delete_dj(self, username: str) -> bool:
         """Remove a DJ's row entirely, freeing their username/slot.
 
         Not just "not ready" -- this drops their password too, so a stale
         stream key stops working. Revisiting the DJ dashboard afterwards
         self-registers them again from scratch (see get_or_create_dj), now
-        unapproved.
+        unapproved. Their chat history goes with them -- a re-registration
+        under the same username starts a fresh thread rather than
+        resurrecting old messages.
         """
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM djs WHERE username = ?", (username,))
+            conn.execute("DELETE FROM messages WHERE dj_username = ?", (username,))
             conn.commit()
             return cur.rowcount > 0
 
@@ -235,3 +307,96 @@ class Database:
                 "SELECT ts, message FROM eventlog ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
             return [{"ts": r["ts"], "message": r["message"]} for r in rows]
+
+    # -- messages (admin<->DJ chat) -----------------------------------------
+    #
+    # Deliberately simple: one flat table, no "conversation" object, no
+    # read-vs-delivered distinction beyond acked_at. `sender` is whichever
+    # side wrote the row; the *other* side is the one that acks it.
+    #   - admin -> dj: the DJ must explicitly acknowledge (CONCEPT: "make it
+    #     very annoying until acknowledged" -- see ack_admin_message).
+    #   - dj -> admin: acked_at is set when the admin opens that DJ's thread
+    #     (mark_dj_messages_read), just clearing the unread badge -- no
+    #     forced interaction required on the admin's own dashboard.
+
+    def add_message(self, dj_username: str, sender: str, text: str) -> dict:
+        if sender not in ("admin", "dj"):
+            raise ValueError(f"invalid sender: {sender!r}")
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("message text must not be empty")
+        if self.get_dj(dj_username) is None:
+            raise ValueError(f"unknown dj: {dj_username!r}")
+        ts = _iso_now()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO messages (dj_username, sender, text, created_at, acked_at) "
+                "VALUES (?, ?, ?, ?, NULL)",
+                (dj_username, sender, text, ts),
+            )
+            conn.commit()
+            return {
+                "id": cur.lastrowid,
+                "dj_username": dj_username,
+                "sender": sender,
+                "text": text,
+                "created_at": ts,
+                "acked_at": None,
+            }
+
+    def list_messages(self, dj_username: str, limit: int = 200) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, dj_username, sender, text, created_at, acked_at FROM messages "
+                "WHERE dj_username = ? ORDER BY id ASC LIMIT ?",
+                (dj_username, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def unacked_admin_messages(self, dj_username: str) -> List[dict]:
+        """Admin->DJ messages this DJ has not yet acknowledged -- backs the
+        DJ dashboard's forced-acknowledgment banner."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, dj_username, sender, text, created_at, acked_at FROM messages "
+                "WHERE dj_username = ? AND sender = 'admin' AND acked_at IS NULL "
+                "ORDER BY id ASC",
+                (dj_username,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def ack_admin_message(self, message_id: int, dj_username: str) -> bool:
+        """The DJ acknowledging one of their own unacked admin messages.
+        Scoped to (id, dj_username, sender='admin') so a DJ can only ack
+        messages addressed to them, never someone else's or their own
+        outgoing ones."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE messages SET acked_at = ? "
+                "WHERE id = ? AND dj_username = ? AND sender = 'admin' AND acked_at IS NULL",
+                (_iso_now(), message_id, dj_username),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def mark_dj_messages_read(self, dj_username: str) -> None:
+        """The admin opening a DJ's thread clears that DJ's unread badge --
+        no forced interaction, unlike ack_admin_message above."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE messages SET acked_at = ? "
+                "WHERE dj_username = ? AND sender = 'dj' AND acked_at IS NULL",
+                (_iso_now(), dj_username),
+            )
+            conn.commit()
+
+    def unread_dj_message_counts(self) -> dict:
+        """{username: count} of un-read (from the admin's perspective)
+        DJ->admin messages, for the roster's unread badge. Only usernames
+        with at least one unread message are present."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT dj_username, COUNT(*) AS n FROM messages "
+                "WHERE sender = 'dj' AND acked_at IS NULL GROUP BY dj_username"
+            ).fetchall()
+            return {r["dj_username"]: r["n"] for r in rows}

@@ -15,29 +15,46 @@
     gap: 1em;
   }
 
-  /* --- Tally: roughly half the screen, three unmistakable states --- */
+  /* --- Header: event name + compact tally. The old tally was a 50vh box
+     -- during an actual event the DJ mostly just needs a glance to
+     confirm their own state, not a screen-filling widget (CONCEPT.md
+     issue #2: "way too big, this is not necessary"). --- */
+  header.top-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.8em;
+    flex-wrap: wrap;
+  }
+  #event-name {
+    font-weight: 800;
+    font-size: 1.15em;
+    color: var(--text-dim);
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  #event-name.hidden { display: none; }
+
   #tally {
-    height: 50vh;
-    min-height: 320px;
     border-radius: var(--radius);
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.4em;
-    text-align: center;
-    border: 4px solid transparent;
+    gap: 0.6em;
+    padding: 0.5em 1.1em;
+    border: 2px solid transparent;
     transition: background 0.2s ease, border-color 0.2s ease;
+    flex-shrink: 0;
   }
 
   #tally .tally-label {
-    font-size: 3.2em;
+    font-size: 1.15em;
     font-weight: 800;
     letter-spacing: 0.02em;
   }
 
-  #tally .tally-sub {
-    font-size: 1.3em;
+  #tally .tally-name {
+    font-size: 0.9em;
     font-weight: 600;
     opacity: 0.85;
   }
@@ -65,11 +82,12 @@
 
   @keyframes onair-pulse {
     0%, 100% { box-shadow: 0 0 0px 0px rgba(239, 68, 68, 0.55); }
-    50% { box-shadow: 0 0 32px 8px rgba(239, 68, 68, 0.55); }
+    50% { box-shadow: 0 0 22px 5px rgba(239, 68, 68, 0.55); }
   }
 
   @media (prefers-reduced-motion: reduce) {
     #tally.state-onair { animation: none; }
+    .ack-item { animation: none !important; }
   }
 
   /* --- Who's live now --- */
@@ -87,8 +105,9 @@
     color: var(--text-dim);
   }
 
-  /* --- Other DJs --- */
-  #other-djs ul {
+  /* --- Running order (self + other DJs, with schedule if the admin set
+     one) --- */
+  #dj-list ul {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -96,15 +115,188 @@
     flex-direction: column;
     gap: 0.6em;
   }
-  #other-djs li {
+  #dj-list li {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.3em 0.8em;
     background: var(--bg-raised-2);
     border-radius: var(--radius);
     padding: 0.6em 1em;
     font-weight: 600;
   }
+  #dj-list li.self { border: 1px solid var(--blue); }
+  #dj-list .dj-list-name-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+  }
+  #dj-list .you-tag {
+    font-size: 0.75em;
+    font-weight: 800;
+    color: var(--blue);
+  }
+  #dj-list .schedule-text {
+    font-size: 0.85em;
+    font-weight: 600;
+    color: var(--text-dim);
+    flex-basis: 100%;
+  }
+
+  /* --- Chat: forced-acknowledgment banner for unread admin messages.
+     Unmissable but explicitly non-blocking (CONCEPT.md issue #2: "very
+     annoying until acknowledged, whilst not blocking the view to other
+     stuff") -- so it's an always-on-top strip, not a modal/overlay, and
+     the rest of the page stays fully usable underneath it. --- */
+  #ack-banner {
+    position: sticky;
+    top: 0;
+    z-index: 500;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+    margin: -1em -1em 0 -1em;
+    padding: 0.7em 1em;
+  }
+  #ack-banner.hidden { display: none; }
+  .ack-item {
+    background: var(--red-bg);
+    border: 2px solid var(--red);
+    border-radius: var(--radius);
+    padding: 0.7em 0.9em;
+    display: flex;
+    align-items: center;
+    gap: 0.8em;
+    flex-wrap: wrap;
+    animation: ack-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes ack-pulse {
+    0%, 100% { box-shadow: 0 0 0px 0px rgba(239, 68, 68, 0.5); }
+    50% { box-shadow: 0 0 18px 4px rgba(239, 68, 68, 0.5); }
+  }
+  .ack-item-text {
+    flex: 1 1 14em;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: #ffd4d4;
+    font-weight: 700;
+  }
+  .ack-item-label {
+    display: block;
+    font-size: 0.75em;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    color: var(--red);
+    text-transform: uppercase;
+    margin-bottom: 0.15em;
+  }
+  .ack-item-btn {
+    background: var(--red);
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .ack-item-btn:hover:not(:disabled) { background: #ff5c5c; }
+
+  /* --- Chat thread (send to admin + history) --- */
+  #chat-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+    max-height: 260px;
+    overflow-y: auto;
+    margin-bottom: 0.8em;
+  }
+  .chat-msg {
+    max-width: 85%;
+    padding: 0.5em 0.8em;
+    border-radius: 10px;
+    font-size: 0.95em;
+    overflow-wrap: anywhere;
+  }
+  .chat-msg-from-admin {
+    align-self: flex-start;
+    background: var(--bg-raised-2);
+  }
+  .chat-msg-from-dj {
+    align-self: flex-end;
+    background: var(--blue-bg);
+    color: #cfe0ff;
+  }
+  .chat-msg-meta {
+    display: block;
+    font-size: 0.75em;
+    color: var(--text-faint);
+    margin-top: 0.25em;
+  }
+  .chat-msg-ack {
+    color: var(--green);
+  }
+  #chat-empty {
+    color: var(--text-faint);
+    font-style: italic;
+  }
+  #chat-form {
+    display: flex;
+    gap: 0.5em;
+  }
+  #chat-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--font);
+  }
+
+  /* --- Live preview (opt-in HLS of whoever is currently on air) --- */
+  .preview-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 0.8em;
+    flex-wrap: wrap;
+  }
+  #preview-wrap {
+    margin-top: 0.7em;
+    max-width: 28em;
+  }
+  #preview-wrap.hidden { display: none; }
+  #preview-video {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border-radius: 6px;
+    display: block;
+  }
+  #preview-unavailable {
+    margin-top: 0.7em;
+    color: var(--text-faint);
+    font-style: italic;
+  }
+  #preview-unavailable.hidden { display: none; }
+  .preview-hint {
+    margin-top: 0.6em;
+    color: var(--text-faint);
+    font-size: 0.85em;
+  }
+
+  /* --- Stream setup: collapsed by default while connected/on air, since
+     most of the time (mid-event) a DJ doesn't need it -- see CONCEPT.md
+     issue #2: "should be somehow mostly hidden DURING the event. Maybe
+     just a popup." A <details> disclosure is the low-tech equivalent of
+     that popup: out of the way until opened, no separate modal plumbing
+     needed. --- */
+  #setup-details summary {
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 1.05em;
+    list-style: none;
+  }
+  #setup-details summary::-webkit-details-marker { display: none; }
+  #setup-details summary::before {
+    content: "▸ ";
+    color: var(--text-dim);
+  }
+  #setup-details[open] summary::before { content: "▾ "; }
+  #setup-details[open] summary { margin-bottom: 0.8em; }
+  #setup-details .setup-body > * + * { margin-top: 1.2em; }
 
   /* --- Credentials --- */
   .cred-row {
@@ -218,63 +410,21 @@
 <body>
 
 <div id="app" class="hidden">
-  <div id="tally" class="state-disconnected">
-    <div class="tally-label" id="tally-label">NICHT VERBUNDEN</div>
-    <div class="tally-sub" id="tally-name">—</div>
-  </div>
+  <div id="ack-banner" class="hidden"></div>
+
+  <header class="top-bar">
+    <div id="event-name" class="hidden"></div>
+    <div id="tally" class="state-disconnected">
+      <div class="tally-label" id="tally-label">NICHT VERBUNDEN</div>
+      <div class="tally-name" id="tally-name">—</div>
+    </div>
+  </header>
 
   <div id="live-now" class="card">Lädt…</div>
 
-  <div class="card" id="other-djs">
-    <h2>Andere DJs</h2>
-    <ul id="other-djs-list"></ul>
-  </div>
-
-  <div class="card" id="credentials">
-    <h2>Deine Zugangsdaten</h2>
-    <div class="cred-row">
-      <div class="cred-label">Server</div>
-      <div class="cred-value" id="cred-rtmp-server">—</div>
-      <button class="cred-copy-btn" data-copy-target="cred-rtmp-server">Kopieren</button>
-    </div>
-    <div class="cred-row">
-      <div class="cred-label">Stream-Key</div>
-      <div class="cred-value" id="cred-stream-key">•••••••</div>
-      <button class="cred-toggle-btn" id="cred-stream-key-toggle">Anzeigen</button>
-      <button class="cred-copy-btn" data-copy-target="cred-stream-key" data-copy-raw="password">Kopieren</button>
-    </div>
-    <div class="format-hint" id="cred-format-hint"></div>
-  </div>
-
-  <div class="card" id="howto">
-    <h2>Verbinden mit OBS</h2>
-    <p class="howto-intro">
-      Trag die Zugangsdaten oben (Server, Stream-Key) in OBS ein - am besten
-      per "Kopieren"-Button, um Tippfehler zu vermeiden.
-      Am wichtigsten: teste die Verbindung <em>vor</em> dem Event einmal kurz,
-      nicht erst wenn du gleich dran bist.
-    </p>
-
-    <details class="howto-app" open>
-      <summary>OBS Studio</summary>
-      <ol>
-        <li><strong>Einstellungen</strong> → <strong>Stream</strong>.</li>
-        <li><strong>Dienst</strong>: <em>Benutzerdefiniert...</em> auswählen.</li>
-        <li><strong>Server</strong> = der Server-Wert oben, <strong>Stream-Key</strong>
-          = der Stream-Key-Wert oben (auf "Anzeigen" klicken, dann kopieren).</li>
-        <li><strong>Ausgabe</strong>-Reiter: Video-Encoder H.264 (x264 oder ein
-          Hardware-Encoder), Audio-Encoder AAC - beides ist OBS' Standard, hier
-          muss meist nichts geändert werden.</li>
-        <li>Übernehmen, dann im Hauptfenster auf
-          <strong>Streaming starten</strong> klicken.</li>
-      </ol>
-    </details>
-
-    <p class="howto-note">
-      Andere Software mit generischem RTMP-Push funktioniert genauso - Server
-      und Stream-Key heißen dort oft "URL" bzw. "Key"/"Pfad". Solange sie
-      H.264-Video und AAC-Audio per RTMP senden kann, passt sie.
-    </p>
+  <div class="card" id="dj-list">
+    <h2>DJs</h2>
+    <ul id="dj-list-items"></ul>
   </div>
 
   <div class="card" id="conn-quality">
@@ -319,6 +469,83 @@
       </div>
     </div>
   </div>
+
+  <div class="card" id="preview-card">
+    <h2>Stream-Vorschau</h2>
+    <div class="preview-toggle-row">
+      <button id="preview-toggle-btn">Vorschau aktivieren</button>
+    </div>
+    <div id="preview-wrap" class="hidden">
+      <video id="preview-video" muted playsinline autoplay></video>
+    </div>
+    <div id="preview-unavailable" class="hidden">Gerade kein Live-Signal.</div>
+    <p class="preview-hint">
+      Zeigt das Rohsignal, das gerade on air ist - nicht den fertigen Mix
+      des Betreibers (Overlays, Übergänge etc. laufen erst danach in dessen
+      OBS). Bewusst nicht automatisch aktiv, um Bandbreite zu sparen.
+    </p>
+  </div>
+
+  <div class="card" id="chat-card">
+    <h2>Nachrichten mit dem Betreiber</h2>
+    <div id="chat-messages"><div id="chat-empty">Noch keine Nachrichten.</div></div>
+    <form id="chat-form">
+      <input type="text" id="chat-input" placeholder="Nachricht an den Betreiber…" maxlength="500" autocomplete="off">
+      <button type="submit" id="chat-send-btn">Senden</button>
+    </form>
+  </div>
+
+  <details id="setup-details">
+    <summary>Stream-Setup (Zugangsdaten &amp; Verbindung)</summary>
+    <div class="setup-body">
+      <div id="credentials">
+        <h3>Deine Zugangsdaten</h3>
+        <div class="cred-row">
+          <div class="cred-label">Server</div>
+          <div class="cred-value" id="cred-rtmp-server">—</div>
+          <button class="cred-copy-btn" data-copy-target="cred-rtmp-server">Kopieren</button>
+        </div>
+        <div class="cred-row">
+          <div class="cred-label">Stream-Key</div>
+          <div class="cred-value" id="cred-stream-key">•••••••</div>
+          <button class="cred-toggle-btn" id="cred-stream-key-toggle">Anzeigen</button>
+          <button class="cred-copy-btn" data-copy-target="cred-stream-key" data-copy-raw="password">Kopieren</button>
+        </div>
+        <div class="format-hint" id="cred-format-hint"></div>
+      </div>
+
+      <div id="howto">
+        <h3>Verbinden mit OBS</h3>
+        <p class="howto-intro">
+          Trag die Zugangsdaten oben (Server, Stream-Key) in OBS ein - am besten
+          per "Kopieren"-Button, um Tippfehler zu vermeiden.
+          Am wichtigsten: teste die Verbindung <em>vor</em> dem Event einmal kurz,
+          nicht erst wenn du gleich dran bist.
+        </p>
+
+        <details class="howto-app" open>
+          <summary>OBS Studio</summary>
+          <ol>
+            <li><strong>Einstellungen</strong> → <strong>Stream</strong>.</li>
+            <li><strong>Dienst</strong>: <em>Benutzerdefiniert...</em> auswählen.</li>
+            <li><strong>Server</strong> = der Server-Wert oben, <strong>Stream-Key</strong>
+              = der Stream-Key-Wert oben (auf "Anzeigen" klicken, dann kopieren).</li>
+            <li><strong>Ausgabe</strong>-Reiter: Video-Encoder H.264 (x264 oder ein
+              Hardware-Encoder), Audio-Encoder AAC - beides ist OBS' Standard, hier
+              muss meist nichts geändert werden.</li>
+            <li>Übernehmen, dann im Hauptfenster auf
+              <strong>Streaming starten</strong> klicken.</li>
+          </ol>
+        </details>
+
+        <p class="howto-note">
+          Andere Software mit generischem RTMP-Push funktioniert genauso - Server
+          und Stream-Key heißen dort oft "URL" bzw. "Key"/"Pfad". Solange sie
+          H.264-Video und AAC-Audio per RTMP senden kann, passt sie.
+        </p>
+      </div>
+    </div>
+  </details>
 </div>
 
 <div id="pending-app" class="hidden">
@@ -343,6 +570,7 @@
   <div class="box">Verbindung zum Server verloren</div>
 </div>
 
+<script src="/static/vendor/hls.min.js"></script>
 <script src="/static/shared_chart.js"></script>
 <script src="/static/dj/dj.js"></script>
 </body>

@@ -129,11 +129,13 @@ class StateManager:
         connected = set(self.connected_since)
         reason = compute_reason(self.mode, self.on_air, self.pinned, connected)
         warning = self._resolve_warning()
+        unread_counts = self.db.unread_dj_message_counts()
         djs = [
             {
                 "username": u,
                 "connected": u in connected,
                 "since": iso_z(self.connected_since[u]) if u in connected else None,
+                "unread_messages": unread_counts.get(u, 0),
             }
             for u in self.db.list_ready_usernames()
         ]
@@ -144,6 +146,7 @@ class StateManager:
             "reason": reason,
             "warning": warning,
             "djs": djs,
+            "event_name": self.db.get_event_name(),
             "server_time": iso_z(datetime.now(timezone.utc)),
         }
 
@@ -153,8 +156,20 @@ class StateManager:
             return None
         connected = set(self.connected_since)
         reason = compute_reason(self.mode, self.on_air, self.pinned, connected)
+        # Every ready DJ's running-order times are shown to everyone, not
+        # just their own -- CONCEPT: "so that they can get a live in XY
+        # minutes", but seeing the whole running order (who's up after
+        # them) is strictly more useful than just their own slot and costs
+        # nothing extra to expose (still purely informational, see
+        # db.set_schedule).
         djs = [
-            {"username": u, "connected": u in connected} for u in self.db.list_ready_usernames()
+            {
+                "username": u,
+                "connected": u in connected,
+                "scheduled_start": (self.db.get_dj(u) or {}).get("scheduled_start"),
+                "scheduled_end": (self.db.get_dj(u) or {}).get("scheduled_end"),
+            }
+            for u in self.db.list_ready_usernames()
         ]
         return {
             "dj": {
@@ -163,11 +178,15 @@ class StateManager:
                 "connected": username in connected,
                 "since": iso_z(self.connected_since[username]) if username in connected else None,
                 "on_air": self.on_air == username,
+                "scheduled_start": dj.get("scheduled_start"),
+                "scheduled_end": dj.get("scheduled_end"),
             },
             "mode": self.mode,
             "on_air": self.on_air,
             "reason": reason,
             "djs": djs,
+            "event_name": self.db.get_event_name(),
+            "unacked_messages": self.db.unacked_admin_messages(username),
             "server_time": iso_z(datetime.now(timezone.utc)),
         }
 

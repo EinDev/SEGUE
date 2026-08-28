@@ -108,14 +108,91 @@ window.SegueChart = (function () {
 
     wrapEl.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${parts.join("")}</svg>`;
 
-    if (captionEl) {
+    const baseCaption = (() => {
       const last = values[values.length - 1];
       const rangeText =
         dataMin === dataMax
           ? `${dataMin.toFixed(decimals)}${unit}`
           : `${dataMin.toFixed(decimals)}–${dataMax.toFixed(decimals)}${unit}`;
-      captionEl.textContent = `aktuell ${last.toFixed(decimals)}${unit} · letzte 5 Min.: ${rangeText}`;
+      return `aktuell ${last.toFixed(decimals)}${unit} · letzte 5 Min.: ${rangeText}`;
+    })();
+    if (captionEl) captionEl.textContent = baseCaption;
+
+    // Point-under-cursor readout: hover (or touch-drag) shows the exact
+    // value + time of the nearest sample instead of just the "current /
+    // 5-min range" summary -- CONCEPT.md issue #2: stats should be "more
+    // interactive". Deliberately modest: no zoom/pan, just a readout,
+    // since this is a glance-at-a-chart tool next to a lighting desk, not
+    // a full analytics view.
+    const withValues = samples.filter((s) => s.v != null);
+    if (withValues.length > 0) {
+      attachHoverReadout(wrapEl, captionEl, withValues, x, y, W, H, unit, decimals, colorClass, baseCaption);
     }
+  }
+
+  function attachHoverReadout(wrapEl, captionEl, withValues, x, y, W, H, unit, decimals, colorClass, baseCaption) {
+    const svg = wrapEl.querySelector("svg");
+    if (!svg) return;
+
+    const ns = "http://www.w3.org/2000/svg";
+    const line = document.createElementNS(ns, "line");
+    line.setAttribute("class", "chart-hover-line");
+    line.setAttribute("y1", "0");
+    line.setAttribute("y2", String(H));
+    line.setAttribute("opacity", "0");
+    const dot = document.createElementNS(ns, "circle");
+    dot.setAttribute("class", "chart-hover-dot " + colorClass);
+    dot.setAttribute("r", "2.4");
+    dot.setAttribute("opacity", "0");
+    svg.appendChild(line);
+    svg.appendChild(dot);
+
+    function nearestSample(clientX) {
+      const rect = svg.getBoundingClientRect();
+      if (rect.width === 0) return null;
+      const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const targetX = frac * W;
+      let best = withValues[0];
+      let bestDist = Math.abs(x(best.t) - targetX);
+      for (const s of withValues) {
+        const dist = Math.abs(x(s.t) - targetX);
+        if (dist < bestDist) {
+          best = s;
+          bestDist = dist;
+        }
+      }
+      return best;
+    }
+
+    function show(clientX) {
+      const sample = nearestSample(clientX);
+      if (!sample) return;
+      const sx = x(sample.t).toFixed(1);
+      const sy = y(sample.v).toFixed(1);
+      line.setAttribute("x1", sx);
+      line.setAttribute("x2", sx);
+      line.setAttribute("opacity", "1");
+      dot.setAttribute("cx", sx);
+      dot.setAttribute("cy", sy);
+      dot.setAttribute("opacity", "1");
+      if (captionEl) {
+        const d = new Date(sample.t);
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        const ss = String(d.getSeconds()).padStart(2, "0");
+        captionEl.textContent = `${sample.v.toFixed(decimals)}${unit} um ${hh}:${mm}:${ss}`;
+      }
+    }
+
+    function hide() {
+      line.setAttribute("opacity", "0");
+      dot.setAttribute("opacity", "0");
+      if (captionEl) captionEl.textContent = baseCaption;
+    }
+
+    svg.addEventListener("pointermove", (ev) => show(ev.clientX));
+    svg.addEventListener("pointerdown", (ev) => show(ev.clientX));
+    svg.addEventListener("pointerleave", hide);
   }
 
   return { WINDOW_MS, toSeries, renderSparkline };
