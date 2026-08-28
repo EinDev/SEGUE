@@ -78,6 +78,54 @@ def test_add_message_empty_text_raises(db):
         db.add_message("dj1", "admin", "   ")
 
 
+# ---------------------------------------------------------------------------
+# Admins (promoted, in addition to the one primary/env-var admin -- see
+# app.main._is_admin for how these combine with ONAIR_ADMIN_USERNAME)
+# ---------------------------------------------------------------------------
+
+def test_new_username_is_not_admin(db):
+    assert db.is_admin("alice") is False
+
+
+def test_add_admin_makes_is_admin_true(db):
+    db.add_admin("alice", "root")
+    assert db.is_admin("alice") is True
+
+
+def test_add_admin_is_idempotent(db):
+    db.add_admin("alice", "root")
+    db.add_admin("alice", "someone-else")  # re-promoting shouldn't error
+    admins = db.list_admins()
+    assert len(admins) == 1
+    assert admins[0]["promoted_by"] == "root"  # original promoter preserved
+
+
+def test_list_admins_reflects_promoted_by(db):
+    db.add_admin("alice", "root")
+    admins = db.list_admins()
+    assert admins[0]["username"] == "alice"
+    assert admins[0]["promoted_by"] == "root"
+    assert admins[0]["created_at"]
+
+
+def test_remove_admin_returns_true_when_present(db):
+    db.add_admin("alice", "root")
+    assert db.remove_admin("alice") is True
+    assert db.is_admin("alice") is False
+
+
+def test_remove_admin_returns_false_when_absent(db):
+    assert db.remove_admin("nobody") is False
+
+
+def test_remove_admin_does_not_affect_others(db):
+    db.add_admin("alice", "root")
+    db.add_admin("bob", "root")
+    db.remove_admin("alice")
+    assert db.is_admin("alice") is False
+    assert db.is_admin("bob") is True
+
+
 def test_admin_message_is_unacked_until_dj_acks(db):
     db.get_or_create_dj("dj1")
     msg = db.add_message("dj1", "admin", "bitte kurz melden")

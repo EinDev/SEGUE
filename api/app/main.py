@@ -8,8 +8,13 @@ form or session cookie here at all -- every request that reaches this app
 is already an authenticated human, identified by a trusted request header
 (ONAIR_AUTH_USERNAME_HEADER, default "X-authentik-username"). The app's own
 job is only role differentiation: the one username in ONAIR_ADMIN_USERNAME
-gets the admin API; everyone else is treated as a DJ, who self-registers on
-first visit and starts out not-ready until the admin flips them on.
+is the primary admin and always gets the admin API -- it's a config value,
+not a database row, so unlike every other admin it can never be demoted
+(see db.py's admins-table docstring and _is_admin below). That primary
+admin, or any admin they've since promoted via /api/admin/admins, can
+promote/demote further usernames. Everyone else is treated as a DJ, who
+self-registers on first visit and starts out not-ready until an admin
+flips them on.
 
 A third identity kind exists alongside admin/DJ: the LJ controller (see
 lj-controller/), a bare script running on the event operator's own machine,
@@ -85,10 +90,18 @@ def get_identity(request: Request) -> str:
     return username
 
 
+def _is_admin(username: str) -> bool:
+    """True for the one primary admin (ONAIR_ADMIN_USERNAME) or anyone a
+    primary/promoted admin has since promoted via /api/admin/admins (see
+    db.py's admins-table docstring). The primary admin is never a row in
+    that table -- it's purely the env var -- so it can never be demoted."""
+    return username == app.state.admin_username or app.state.db.is_admin(username)
+
+
 def require_admin(request: Request) -> str:
     username = get_identity(request)
-    if username != app.state.admin_username:
-        raise HTTPException(status_code=403, detail="not the admin")
+    if not _is_admin(username):
+        raise HTTPException(status_code=403, detail="not an admin")
     return username
 
 
@@ -108,7 +121,11 @@ def _ws_identity(websocket: WebSocket) -> Optional[str]:
 
 class ConnectionManager:
     def __init__(self) -> None:
-        self.admin_sockets: set[WebSocket] = set()
+        # Keyed by username (not a plain set) so broadcast() can re-check
+        # admin status on every push -- a demoted admin's already-open
+        # socket gets closed on the next tick instead of continuing to
+        # receive full state until they close the tab themselves.
+        self.admin_sockets: dict[WebSocket, str] = {}
         self.dj_sockets: dict[WebSocket, str] = {}
         self.lj_sockets: set[WebSocket] = set()
 
@@ -116,13 +133,20 @@ class ConnectionManager:
         state_manager: StateManager = app.state.state_manager
         full_state = state_manager.get_full_state()
         dead = []
-        for ws in list(self.admin_sockets):
+        for ws, username in list(self.admin_sockets.items()):
+            if not _is_admin(username):
+                dead.append(ws)
+                try:
+                    await ws.close(code=4403)
+                except Exception:  # noqa: BLE001
+                    pass
+                continue
             try:
                 await ws.send_json(full_state)
             except Exception:  # noqa: BLE001
                 dead.append(ws)
         for ws in dead:
-            self.admin_sockets.discard(ws)
+            self.admin_sockets.pop(ws, None)
 
         dead = []
         for ws, username in list(self.dj_sockets.items()):
@@ -131,6 +155,7 @@ class ConnectionManager:
                 dead.append(ws)
                 continue
             dj_state["dj"]["credentials"] = _dj_credentials(username)
+            dj_state["dj"]["is_admin"] = _is_admin(username)
             try:
                 await ws.send_json(dj_state)
             except Exception:  # noqa: BLE001
@@ -757,14 +782,80 @@ async def admin_post_message(username: str, body: MessageRequest, request: Reque
     return message
 
 
+# ---------------------------------------------------------------------------
+# Admin: manage other admins (see db.py's admins-table docstring). The one
+# primary admin (ONAIR_ADMIN_USERNAME) is never a row here and can never be
+# demoted -- every route below explicitly guards against operating on it.
+# Any admin, primary or promoted, can promote/demote any *other* admin.
+# ---------------------------------------------------------------------------
+
+class AdminUsernameRequest(BaseModel):
+    username: str
+
+
+@app.get("/api/admin/admins")
+async def list_admins(request: Request) -> list:
+    require_admin(request)
+    result = [
+        {
+            "username": app.state.admin_username,
+            "primary": True,
+            "promoted_by": None,
+            "created_at": None,
+        }
+    ]
+    for admin in app.state.db.list_admins():
+        result.append(
+            {
+                "username": admin["username"],
+                "primary": False,
+                "promoted_by": admin["promoted_by"],
+                "created_at": admin["created_at"],
+            }
+        )
+    return result
+
+
+@app.post("/api/admin/admins")
+async def promote_admin(body: AdminUsernameRequest, request: Request) -> dict:
+    promoted_by = require_admin(request)
+    username = (body.username or "").strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="username must not be empty")
+    if username == app.state.admin_username:
+        raise HTTPException(status_code=400, detail="already the primary admin")
+    app.state.db.add_admin(username, promoted_by)
+    app.state.db.log_event(f"{username} zum Admin befördert (von {promoted_by})")
+    await manager.broadcast()
+    return {"username": username, "primary": False}
+
+
+@app.delete("/api/admin/admins/{username}")
+async def demote_admin(username: str, request: Request) -> dict:
+    demoted_by = require_admin(request)
+    # 400, not 403: the caller *is* a properly authorized admin here, just
+    # forbidden from this one action on this one target -- a 401/403 would
+    # make the admin frontend's authedFetch() treat it as "you're not
+    # authorized at all" and boot the caller to the denied screen (see
+    # admin.js's authedFetch), which is wrong for an otherwise-valid admin
+    # who simply tried to demote the untouchable primary admin.
+    if username == app.state.admin_username:
+        raise HTTPException(status_code=400, detail="cannot demote the primary admin")
+    if not app.state.db.remove_admin(username):
+        raise HTTPException(status_code=404, detail="not an admin")
+    app.state.db.log_event(f"{username} als Admin entfernt (von {demoted_by})")
+    await manager.broadcast()
+    return {"username": username, "demoted": True}
+
+
 @app.websocket("/ws")
 async def ws_admin(websocket: WebSocket) -> None:
     username = _ws_identity(websocket)
-    if not username or username != app.state.admin_username:
+    if not username or not _is_admin(username):
         await websocket.close(code=4403)
         return
     await websocket.accept()
-    manager.admin_sockets.add(websocket)
+    manager.admin_sockets[websocket] = username
     try:
         await websocket.send_json(app.state.state_manager.get_full_state())
         while True:
@@ -776,7 +867,7 @@ async def ws_admin(websocket: WebSocket) -> None:
     except Exception:  # noqa: BLE001
         pass
     finally:
-        manager.admin_sockets.discard(websocket)
+        manager.admin_sockets.pop(websocket, None)
 
 
 # ---------------------------------------------------------------------------
@@ -824,6 +915,7 @@ async def dj_state(request: Request) -> dict:
         await manager.broadcast()
     state = app.state.state_manager.get_dj_state(username)
     state["dj"]["credentials"] = _dj_credentials(username)
+    state["dj"]["is_admin"] = _is_admin(username)
     return state
 
 

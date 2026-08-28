@@ -40,8 +40,13 @@ This app never handles credentials itself - it delegates all human
 authentication to whatever sits in front of it, and only trusts one thing:
 a request header (`ONAIR_AUTH_USERNAME_HEADER` in `.env`, default
 `X-authentik-username`) carrying the authenticated username. Whoever's
-username is in `ONAIR_ADMIN_USERNAME` gets admin access; everyone else who
-successfully authenticates is treated as a DJ.
+username is in `ONAIR_ADMIN_USERNAME` is the primary admin, gets admin
+access, and can never be demoted (it's a config value, not a database
+row); everyone else who successfully authenticates is treated as a DJ,
+unless an admin has promoted their username to admin from the "Admins"
+panel in the admin UI - promoted admins have identical rights to the
+primary admin, including promoting/demoting other users, and stay admins
+until demoted again.
 
 Concretely, your reverse proxy/auth layer needs to:
 

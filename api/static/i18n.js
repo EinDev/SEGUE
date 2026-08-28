@@ -84,11 +84,13 @@ window.SegueI18n = (function () {
       "Ein Admin muss dich erst freischalten, bevor du einspeisen kannst.\n    Diese Seite aktualisiert sich automatisch, sobald das passiert ist.",
     "dj.error.body":
       "Diese Seite muss über den vom Betreiber bereitgestellten Login-Weg\n    aufgerufen werden. Falls du darüber hier bist, ist etwas an der Anmeldung falsch\n    konfiguriert - bitte den Betreiber kontaktieren.",
+    "dj.crossLink.adminPanel": "Admin-Panel öffnen",
 
     // ---- admin page ----
     "admin.title": "SEGUE — Admin",
     "admin.denied.body":
-      "Diese Ansicht ist nur für den Admin-Account. Falls du das sein solltest, prüfe die\n    Authentik-Anmeldung und <code>ONAIR_ADMIN_USERNAME</code> auf dem Server.",
+      "Diese Ansicht ist nur für Admins. Falls du das sein solltest, prüfe die\n    Authentik-Anmeldung, <code>ONAIR_ADMIN_USERNAME</code> auf dem Server, oder ob dich ein\n    anderer Admin befördert hat.",
+    "admin.crossLink.djView": "Zur DJ-Ansicht",
     "admin.rtmpServer.label": "RTMP-Server:",
     "admin.rtmpServer.loading": "wird geladen…",
     "admin.fillerBtn": "Filler erzwingen",
@@ -115,6 +117,16 @@ window.SegueI18n = (function () {
     "admin.roster.noFreeSlot": "Kein freier Slot verfügbar.",
     "admin.roster.noFreeSlotDetailed":
       "Alle {max_djs} Slots sind belegt - zuerst einen anderen DJ deaktivieren.",
+    "admin.admins.title": "Admins",
+    "admin.admins.intro":
+      "Der primäre Admin (aus der Server-Konfiguration) kann nicht entfernt werden. Jeder Admin\n      kann weitere Personen befördern oder entfernen.",
+    "admin.admins.empty": "Noch keine weiteren Admins befördert.",
+    "admin.admins.primaryBadge": "Primär",
+    "admin.admins.usernamePlaceholder": "Benutzername",
+    "admin.admins.promoteBtn": "Befördern",
+    "admin.admins.demoteBtn": "Entfernen",
+    "admin.admins.promoteError": "Konnte nicht befördert werden.",
+    "admin.admins.demoteError": "Konnte nicht entfernt werden.",
     "admin.ljSetup.title": "LJ-Setup",
     "admin.ljSetup.intro":
       'Der Operator, der lokal in OBS zwischen den DJs umschaltet ("LJ"),\n      braucht ein eigenes kleines Steuerskript neben seinem OBS - siehe\n      <code>lj-controller/</code> im Repo für den vollen Hintergrund.\n      Hier gibt\'s alles fertig für diese Instanz vorbereitet zum Download.',
@@ -232,11 +244,13 @@ window.SegueI18n = (function () {
       "An admin needs to approve you before you can go live.\n    This page updates automatically once that happens.",
     "dj.error.body":
       "This page must be reached via the login flow provided by the operator.\n    If that's how you got here, something in the login setup is misconfigured -\n    please contact the operator.",
+    "dj.crossLink.adminPanel": "Open admin panel",
 
     // ---- admin page ----
     "admin.title": "SEGUE — Admin",
     "admin.denied.body":
-      "This view is for the admin account only. If that should be you, check\n    the Authentik login and <code>ONAIR_ADMIN_USERNAME</code> on the server.",
+      "This view is for admins only. If that should be you, check\n    the Authentik login, <code>ONAIR_ADMIN_USERNAME</code> on the server, or whether\n    another admin has promoted you.",
+    "admin.crossLink.djView": "Go to DJ view",
     "admin.rtmpServer.label": "RTMP server:",
     "admin.rtmpServer.loading": "loading…",
     "admin.fillerBtn": "Force filler",
@@ -263,6 +277,16 @@ window.SegueI18n = (function () {
     "admin.roster.noFreeSlot": "No free slot available.",
     "admin.roster.noFreeSlotDetailed":
       "All {max_djs} slots are taken - deactivate another DJ first.",
+    "admin.admins.title": "Admins",
+    "admin.admins.intro":
+      "The primary admin (from the server configuration) can't be removed. Any admin\n      can promote or remove other people.",
+    "admin.admins.empty": "No other admins promoted yet.",
+    "admin.admins.primaryBadge": "Primary",
+    "admin.admins.usernamePlaceholder": "Username",
+    "admin.admins.promoteBtn": "Promote",
+    "admin.admins.demoteBtn": "Remove",
+    "admin.admins.promoteError": "Could not promote.",
+    "admin.admins.demoteError": "Could not remove.",
     "admin.ljSetup.title": "LJ setup",
     "admin.ljSetup.intro":
       'The operator who switches locally between DJs in OBS ("LJ") needs\n      their own small control script alongside their OBS - see\n      <code>lj-controller/</code> in the repo for the full background.\n      Everything ready-made for this instance is here to download.',
@@ -377,6 +401,10 @@ window.SegueI18n = (function () {
     const titleNodes = root.querySelectorAll("[data-i18n-title]");
     for (const el of titleNodes) {
       el.setAttribute("title", t(el.getAttribute("data-i18n-title")));
+    }
+    const placeholderNodes = root.querySelectorAll("[data-i18n-placeholder]");
+    for (const el of placeholderNodes) {
+      el.setAttribute("placeholder", t(el.getAttribute("data-i18n-placeholder")));
     }
     document.documentElement.lang = lang;
     const titleKey = document.querySelector("title[data-i18n]");
