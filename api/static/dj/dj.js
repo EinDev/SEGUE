@@ -27,6 +27,7 @@
   const djListItemsEl = document.getElementById("dj-list-items");
   const ackBannerEl = document.getElementById("ack-banner");
   const setupDetailsEl = document.getElementById("setup-details");
+  const adminLinkEl = document.getElementById("admin-link");
 
   let latestState = null;
   let deniedHard = false; // true only on 401 (no identity at all) -- not retried
@@ -90,6 +91,11 @@
     const wasConnected = latestState ? latestState.dj.connected : null;
     latestState = state;
     const dj = state.dj;
+
+    // Independent of the ready/pending gate below -- a promoted admin who
+    // isn't (yet) an approved DJ themself should still be able to reach
+    // the admin panel from here, not just once they're on-air-ready.
+    adminLinkEl.classList.toggle("hidden", !dj.is_admin);
 
     if (!dj.ready) {
       showPending(dj.username);

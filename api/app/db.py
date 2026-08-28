@@ -21,6 +21,13 @@ Tables:
                (CONCEPT: this needs to be hard to miss, not just another
                feed entry); for a DJ message it just means the admin has
                opened that DJ's thread.
+  admins    -- promoted admins *in addition to* the one primary admin from
+               ONAIR_ADMIN_USERNAME (see app.main's _is_admin). The primary
+               admin is never a row here -- it's not stored anywhere, it's
+               purely the env var -- which is exactly what makes it
+               impossible to demote: there's no row to delete. Any admin
+               (primary or promoted) can promote/demote any other promoted
+               admin; only the primary is untouchable.
 
 Slot assignment: only a `ready` DJ ever holds a non-null `slot`. Flipping a
 DJ to ready picks the lowest-numbered free slot among `slot1..slot{max}`;
@@ -102,6 +109,15 @@ class Database:
                     text TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     acked_at TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admins (
+                    username TEXT PRIMARY KEY,
+                    promoted_by TEXT,
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -400,3 +416,44 @@ class Database:
                 "WHERE sender = 'dj' AND acked_at IS NULL GROUP BY dj_username"
             ).fetchall()
             return {r["dj_username"]: r["n"] for r in rows}
+
+    # -- admins (promoted, in addition to the one primary/env-var admin) ----
+    #
+    # See this module's docstring for why the primary admin never appears
+    # here. Everything below only ever concerns *promoted* admins.
+
+    def is_admin(self, username: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM admins WHERE username = ?", (username,)
+            ).fetchone()
+            return row is not None
+
+    def list_admins(self) -> List[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT username, promoted_by, created_at FROM admins ORDER BY created_at ASC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def add_admin(self, username: str, promoted_by: str) -> None:
+        """Promote `username` to admin. Idempotent -- promoting an already
+        -promoted admin again just leaves their existing row (and original
+        promoted_by/created_at) untouched."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO admins (username, promoted_by, created_at) "
+                "VALUES (?, ?, ?)",
+                (username, promoted_by, _iso_now()),
+            )
+            conn.commit()
+
+    def remove_admin(self, username: str) -> bool:
+        """Demote a previously-promoted admin. Returns False if `username`
+        wasn't a promoted admin to begin with (never true for the primary
+        admin, which is never a row here -- see app.main's require_admin
+        for that guard)."""
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM admins WHERE username = ?", (username,))
+            conn.commit()
+            return cur.rowcount > 0

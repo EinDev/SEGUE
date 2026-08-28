@@ -408,11 +408,36 @@
     color: var(--blue);
   }
   #pending-app p { color: var(--text-dim); margin-top: 0.6em; }
+
+  /* Cross-link to the admin panel, shown top-left once an admin flag is
+     confirmed for this identity -- independent of the ready/pending gate
+     above, since a promoted admin who isn't (yet) an approved DJ should
+     still be able to reach the admin panel. Mirrors .lang-switch's fixed
+     top-right placement (shared.css) on the opposite corner. */
+  #admin-link {
+    position: fixed;
+    top: 0.7em;
+    left: 0.7em;
+    z-index: 100;
+    display: inline-block;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.4em 0.8em;
+    font-size: 0.85em;
+    font-weight: 700;
+    color: var(--blue);
+    text-decoration: none;
+  }
+  #admin-link:hover { background: var(--bg-raised-2); }
+  #admin-link.hidden { display: none; }
 </style>
 </head>
 <body>
 
 <div id="lang-mount"></div>
+
+<a id="admin-link" class="hidden" href="/" target="_blank" rel="noopener" data-i18n="dj.crossLink.adminPanel">Admin-Panel öffnen</a>
 
 <div id="app" class="hidden">
   <div id="ack-banner" class="hidden"></div>

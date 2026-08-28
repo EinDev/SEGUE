@@ -28,6 +28,10 @@
   const djRowsEl = document.getElementById("dj-rows");
   const rosterRowsEl = document.getElementById("roster-rows");
   const eventlogEl = document.getElementById("eventlog");
+  const djLinkEl = document.getElementById("dj-link");
+  const adminsRowsEl = document.getElementById("admins-rows");
+  const promoteFormEl = document.getElementById("promote-form");
+  const promoteUsernameInputEl = document.getElementById("promote-username-input");
 
   const eventNameFormEl = document.getElementById("event-name-form");
   const eventNameInputEl = document.getElementById("event-name-input");
@@ -52,6 +56,8 @@
   let lastRosterDjs = [];
   let pendingDeleteUsername = null; // armed inline "wirklich löschen?" state
   let latestAdminState = null;
+  let adminsError = null; // error string shown under the promote form
+  let lastAdmins = [];
   const expandedDetails = new Set(); // usernames with the details panel open
   const activePreviews = new Map(); // username -> Hls instance, or `true` for native HLS playback
 
@@ -128,6 +134,7 @@
     stopDiagnosticsPolling();
     setConnLost(false);
     appEl.classList.add("hidden");
+    djLinkEl.classList.add("hidden");
     deniedEl.classList.remove("hidden");
   }
 
@@ -135,6 +142,7 @@
     authorized = true;
     deniedEl.classList.add("hidden");
     appEl.classList.remove("hidden");
+    djLinkEl.classList.remove("hidden");
     wsBackoffMs = 1000;
     fetchStateOnce().then(() => {
       startPolling();
@@ -142,6 +150,7 @@
     });
     fetchLog();
     fetchRoster();
+    fetchAdmins();
     fetchAdminInfo();
     if (!clockTimer) {
       clockTimer = setInterval(tickClock, 1000);
@@ -1258,6 +1267,116 @@
     }
   }
 
+  // ---- Admins management (see db.py's admins-table docstring + the
+  // /api/admin/admins routes) ----
+
+  async function fetchAdmins() {
+    let resp;
+    try {
+      resp = await authedFetch("/api/admin/admins");
+    } catch (e) {
+      return;
+    }
+    try {
+      const admins = await resp.json();
+      renderAdmins(admins);
+    } catch (e) {
+      // non-fatal for the connection indicator
+    }
+  }
+
+  function renderAdmins(admins) {
+    lastAdmins = admins || [];
+    adminsRowsEl.innerHTML = "";
+    if (lastAdmins.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-faint";
+      empty.textContent = t("admin.admins.empty");
+      adminsRowsEl.appendChild(empty);
+      return;
+    }
+    for (const admin of lastAdmins) {
+      adminsRowsEl.appendChild(buildAdminRow(admin));
+    }
+    if (adminsError) {
+      const err = document.createElement("div");
+      err.className = "admins-error";
+      err.textContent = adminsError;
+      adminsRowsEl.appendChild(err);
+    }
+  }
+
+  function buildAdminRow(admin) {
+    const row = document.createElement("div");
+    row.className = "admin-row";
+
+    const name = document.createElement("div");
+    name.className = "username";
+    name.textContent = admin.username;
+    row.appendChild(name);
+
+    if (admin.primary) {
+      const badge = document.createElement("span");
+      badge.className = "primary-badge";
+      badge.textContent = t("admin.admins.primaryBadge");
+      row.appendChild(badge);
+    }
+
+    const spacer = document.createElement("div");
+    spacer.className = "spacer";
+    row.appendChild(spacer);
+
+    if (!admin.primary) {
+      const demote = document.createElement("button");
+      demote.className = "delete-btn";
+      demote.textContent = t("admin.admins.demoteBtn");
+      demote.addEventListener("click", () => demoteAdmin(admin.username));
+      row.appendChild(demote);
+    }
+
+    return row;
+  }
+
+  promoteFormEl.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const username = promoteUsernameInputEl.value.trim();
+    if (!username) return;
+    adminsError = null;
+    try {
+      const resp = await authedFetch("/api/admin/admins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username }),
+      });
+      if (!resp.ok) {
+        adminsError = t("admin.admins.promoteError");
+        renderAdmins(lastAdmins);
+        return;
+      }
+    } catch (e) {
+      return; // handled via authedFetch
+    }
+    promoteUsernameInputEl.value = "";
+    fetchAdmins();
+  });
+
+  async function demoteAdmin(username) {
+    adminsError = null;
+    try {
+      const resp = await authedFetch(`/api/admin/admins/${encodeURIComponent(username)}`, {
+        method: "DELETE",
+      });
+      if (!resp.ok) {
+        adminsError = t("admin.admins.demoteError");
+        renderAdmins(lastAdmins);
+        return;
+      }
+    } catch (e) {
+      return; // handled via authedFetch
+    }
+    fetchAdmins();
+  }
+
   let logDebounceTimer = null;
   function fetchLogDebounced() {
     if (logDebounceTimer) return;
@@ -1273,6 +1392,15 @@
     rosterDebounceTimer = setTimeout(() => {
       rosterDebounceTimer = null;
       fetchRoster();
+    }, 400);
+  }
+
+  let adminsDebounceTimer = null;
+  function fetchAdminsDebounced() {
+    if (adminsDebounceTimer) return;
+    adminsDebounceTimer = setTimeout(() => {
+      adminsDebounceTimer = null;
+      fetchAdmins();
     }, 400);
   }
 
@@ -1297,6 +1425,7 @@
       fetchStateOnce();
       fetchLog();
       fetchRoster();
+      fetchAdmins();
     }, 3000);
   }
 
@@ -1334,6 +1463,7 @@
         // hammer the endpoints).
         fetchLogDebounced();
         fetchRosterDebounced();
+        fetchAdminsDebounced();
       } catch (e) {
         // ignore malformed message
       }
