@@ -9,6 +9,10 @@
 (function () {
   "use strict";
 
+  const t = window.SegueI18n.t;
+  window.SegueI18n.applyStatic();
+  window.SegueI18n.mountSwitcher(document.getElementById("lang-mount"));
+
   const appEl = document.getElementById("app");
   const pendingAppEl = document.getElementById("pending-app");
   const errorAppEl = document.getElementById("error-app");
@@ -95,13 +99,13 @@
     tallyEl.classList.remove("state-disconnected", "state-connected", "state-onair");
     if (dj.connected === false) {
       tallyEl.classList.add("state-disconnected");
-      tallyLabelEl.textContent = "NICHT VERBUNDEN";
+      tallyLabelEl.textContent = t("dj.tally.disconnected");
     } else if (dj.on_air === true) {
       tallyEl.classList.add("state-onair");
-      tallyLabelEl.textContent = "ON AIR";
+      tallyLabelEl.textContent = t("dj.tally.onair");
     } else {
       tallyEl.classList.add("state-connected");
-      tallyLabelEl.textContent = "VERBUNDEN — NICHT ON AIR";
+      tallyLabelEl.textContent = t("dj.tally.connected");
     }
     tallyNameEl.textContent = dj.username || "";
 
@@ -118,8 +122,9 @@
 
   function renderLiveNow(state) {
     const onAirUsername = state.on_air;
+    const prefix = escapeHtml(t("dj.liveNow.prefix"));
     if (!onAirUsername || onAirUsername === "FILLER") {
-      liveNowEl.innerHTML = `Aktuell on air: <span class="filler">Filler</span>`;
+      liveNowEl.innerHTML = `${prefix}<span class="filler">${escapeHtml(t("dj.liveNow.filler"))}</span>`;
       return;
     }
     // Duration is only computable for yourself (reduced state only carries
@@ -129,7 +134,7 @@
       sinceIso = state.dj.since;
     }
     liveNowEl.innerHTML =
-      `Aktuell on air: <span class="name">${escapeHtml(onAirUsername)}</span>` +
+      `${prefix}<span class="name">${escapeHtml(onAirUsername)}</span>` +
       (sinceIso ? ` <span id="live-since-suffix"></span>` : "");
     liveNowEl.dataset.sinceIso = sinceIso || "";
   }
@@ -144,7 +149,7 @@
     const deltaSec = Math.max(0, Math.floor((Date.now() - since) / 1000));
     const m = Math.floor(deltaSec / 60);
     const s = deltaSec % 60;
-    suffix.textContent = `— seit ${m}m ${s}s`;
+    suffix.textContent = t("dj.liveNow.since", { m, s });
   }
 
   function renderOtherDjs(state) {
@@ -153,7 +158,7 @@
     otherDjsListEl.innerHTML = "";
     if (others.length === 0) {
       const li = document.createElement("li");
-      li.textContent = "Keine weiteren freigeschalteten DJs.";
+      li.textContent = t("dj.otherDjs.empty");
       otherDjsListEl.appendChild(li);
       return;
     }
@@ -163,7 +168,7 @@
       nameSpan.textContent = d.username;
       const pill = document.createElement("span");
       pill.className = "pill " + (d.connected ? "pill-connected" : "pill-disconnected");
-      pill.textContent = d.connected ? "verbunden" : "nicht verbunden";
+      pill.textContent = d.connected ? t("common.connected") : t("common.disconnected");
       li.appendChild(nameSpan);
       li.appendChild(pill);
       otherDjsListEl.appendChild(li);
@@ -178,7 +183,6 @@
     document.getElementById("cred-rtmp-server").dataset.raw = creds.rtmp_server || "";
     document.getElementById("cred-stream-key").dataset.raw = creds.stream_key || "";
     renderStreamKeyField();
-    document.getElementById("cred-format-hint").textContent = creds.format_hint || "";
   }
 
   function renderStreamKeyField() {
@@ -236,13 +240,13 @@
     }
     emptyEl.classList.add("hidden");
     dataEl.classList.remove("hidden");
-    setText("cq-resolution", data.resolution || "unbekannt");
-    setText("cq-codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || "unbekannt");
-    setText("cq-bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : "wird berechnet…");
-    setText("cq-since", data.connected_since ? formatConnSince(data.connected_since) : "unbekannt");
+    setText("cq-resolution", data.resolution || t("common.unknown"));
+    setText("cq-codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || t("common.unknown"));
+    setText("cq-bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : t("common.calculating"));
+    setText("cq-since", data.connected_since ? formatConnSince(data.connected_since) : t("common.unknown"));
     setText(
       "cq-delay",
-      data.delay_seconds != null ? `${data.delay_seconds.toFixed(1)} s` : "nicht ermittelbar"
+      data.delay_seconds != null ? `${data.delay_seconds.toFixed(1)} s` : t("common.notMeasurable")
     );
 
     // 5-min trend charts - "history" is server-side sampled/stored (see
@@ -264,10 +268,10 @@
 
   function formatConnSince(iso) {
     const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "unbekannt";
+    if (Number.isNaN(d.getTime())) return t("common.unknown");
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
-    return `seit ${hh}:${mm}`;
+    return t("common.since", { time: `${hh}:${mm}` });
   }
 
   function escapeHtml(str) {
@@ -292,7 +296,7 @@
 
   function flashCopied(btn, failed) {
     const original = btn.textContent;
-    btn.textContent = failed ? "Fehler" : "Kopiert!";
+    btn.textContent = failed ? t("common.copyFailed") : t("common.copied");
     setTimeout(() => {
       btn.textContent = original;
     }, 1000);
@@ -301,8 +305,8 @@
   document.getElementById("cred-stream-key-toggle").addEventListener("click", () => {
     streamKeyRevealed = !streamKeyRevealed;
     document.getElementById("cred-stream-key-toggle").textContent = streamKeyRevealed
-      ? "Verbergen"
-      : "Anzeigen";
+      ? t("common.hide")
+      : t("common.show");
     renderStreamKeyField();
   });
 

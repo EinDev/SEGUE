@@ -630,9 +630,12 @@ async def set_dj_ready(username: str, body: ReadyRequest, request: Request) -> d
     try:
         slot = app.state.db.set_ready(username, body.ready, app.state.max_djs)
     except NoFreeSlotError:
+        # Structured, not a pre-rendered German sentence -- the admin
+        # frontend (which is localized, see api/static/i18n.js) renders
+        # this in whatever language the viewer has selected.
         raise HTTPException(
             status_code=409,
-            detail=f"Alle {app.state.max_djs} Slots sind belegt - zuerst einen anderen DJ deaktivieren.",
+            detail={"code": "no_free_slot", "max_djs": app.state.max_djs},
         )
     if not body.ready:
         # Free the slot's occupant record immediately -- otherwise a
@@ -706,10 +709,10 @@ def _dj_credentials(username: str) -> Optional[dict]:
     return {
         "rtmp_server": f"rtmp://{app.state.rtmp_host}:{app.state.rtmp_port}",
         "stream_key": stream_key,
-        "format_hint": (
-            "OBS: Einstellungen -> Stream -> Dienst 'Benutzerdefiniert...'. "
-            "Server und Stream-Key oben eintragen. Video H.264, Audio AAC."
-        ),
+        # No format_hint prose here anymore -- it was a hardcoded German
+        # sentence duplicating the (now localized, see api/static/i18n.js)
+        # "Connect with OBS" card on the dj page, which the frontend renders
+        # from its own translation dict instead.
     }
 
 

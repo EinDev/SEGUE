@@ -54,7 +54,7 @@ window.SegueChart = (function () {
     if (values.length === 0) {
       wrapEl.innerHTML = "";
       wrapEl.classList.add("chart-empty");
-      wrapEl.textContent = "keine Daten";
+      wrapEl.textContent = window.SegueI18n.t("common.noData");
       if (captionEl) captionEl.textContent = "";
       return;
     }
@@ -114,7 +114,11 @@ window.SegueChart = (function () {
         dataMin === dataMax
           ? `${dataMin.toFixed(decimals)}${unit}`
           : `${dataMin.toFixed(decimals)}–${dataMax.toFixed(decimals)}${unit}`;
-      captionEl.textContent = `aktuell ${last.toFixed(decimals)}${unit} · letzte 5 Min.: ${rangeText}`;
+      captionEl.textContent = window.SegueI18n.t("common.chartCaption", {
+        last: last.toFixed(decimals),
+        unit: unit,
+        range: rangeText,
+      });
     }
   }
 
