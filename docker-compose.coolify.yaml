@@ -1,4 +1,4 @@
-# Coolify-specific override for docker-compose.yaml.
+# Coolify-specific compose file for docker-compose.yaml.
 #
 # The base docker-compose.yaml is intentionally generic (see the "Auth &
 # routing requirements" / worked-example section of README.md) - it doesn't
@@ -11,28 +11,32 @@
 # so it would "just" be an env var Coolify users set - but Coolify does not
 # perform plain Docker Compose `${VAR:-default}` interpolation on label
 # values the way `docker compose` itself does, so the placeholder was never
-# substituted on a real deploy. A standard Compose override file, applied
-# via `-f`, works regardless of what a given platform does or doesn't
-# interpolate.
+# substituted on a real deploy.
 #
-# Usage:
-#   docker compose -f docker-compose.yaml -f docker-compose.coolify.yaml up -d
+# This file uses the Compose Specification's top-level `include:` directive
+# (supported since Compose v2.20 - far below any Compose plugin bundled
+# with the Docker 29.x host seen in real Coolify deploy logs, and verified
+# working against Compose v5.1.4 locally) to pull in the base
+# docker-compose.yaml's services and layer this file's own `services.api.labels`
+# on top - entirely standalone, with no separate merge step and no `-f`
+# chaining required. This is deliberate: Coolify's "Docker Compose"
+# application type deploys a single compose file location and has no
+# built-in way to combine two files itself, so this file has to be
+# self-sufficient when pointed at directly.
 #
-# On Coolify itself: Coolify's "Docker Compose" application type deploys a
-# single compose file location, with no built-in `-f` chaining as of this
-# writing. To get this label into a Coolify-managed deployment, either:
-#   - Generate a merged file locally and point Coolify's "Docker Compose
-#     Location" at that instead of the base file. Use --no-interpolate so
-#     this doesn't bake real secret values from your local .env into the
-#     merged file - it only needs to merge the `labels:` block, not resolve
-#     variables (Coolify resolves those itself at deploy time):
-#       docker compose -f docker-compose.yaml -f docker-compose.coolify.yaml \
-#         config --no-interpolate > docker-compose.merged.yaml
-#   - Or add the label directly on the `api` service through Coolify's own
-#     UI (Configuration > General > Labels), keeping in mind that Coolify
-#     regenerates the service from docker-compose.yaml on every deploy, so a
-#     UI-only label doesn't survive a redeploy the way this file does.
+# Usage (works identically whether run standalone or not, since `include:`
+# already pulls in the base file):
+#   docker compose -f docker-compose.coolify.yaml up -d
+#
+# On Coolify itself: point "Docker Compose Location" directly at this file.
+# Verify what Coolify will actually run with:
+#   docker compose -f docker-compose.coolify.yaml config
+# which should resolve to a complete project with both services and the
+# `coolify.traefik.middlewares` label present on `api`.
+#
 # See README.md's worked example for the full Authentik + Traefik walkthrough.
+include:
+  - docker-compose.yaml
 services:
   api:
     labels:
