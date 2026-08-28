@@ -167,6 +167,17 @@ longer requires restarting the media relay, only `api`, see `.env.example`).
      service (Coolify injects it into whatever router it auto-generates
      for the domain you attach in its UI); on plain Traefik, attach the
      middleware to that router directly in your own dynamic/static config.
+     This repo ships that label as a separate
+     [`docker-compose.coolify.yaml`](docker-compose.coolify.yaml) override
+     rather than baking it into the generic `docker-compose.yaml` (an
+     earlier attempt drove it from an env var instead, but Coolify doesn't
+     interpolate `${VAR:-default}` in label values the way `docker compose`
+     itself does, so that never actually applied on a real deploy). Apply it
+     with `docker compose -f docker-compose.yaml -f
+     docker-compose.coolify.yaml up -d`; see the comment at the top of that
+     file for how to get it into a Coolify-managed deploy specifically,
+     since Coolify's own "Docker Compose" application type currently only
+     accepts a single compose file location.
    - Confirm the outpost is configured to inject the authenticated
      username into the `X-authentik-username` header (Authentik's own
      default, and this app's default for `ONAIR_AUTH_USERNAME_HEADER`) -
