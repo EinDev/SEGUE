@@ -162,19 +162,11 @@ longer requires restarting the media relay, only `api`, see `.env.example`).
                - X-authentik-uid
      ```
    - **Attach that middleware to the router serving the `api` service's
-     domain.** On Coolify specifically, set `COOLIFY_TRAEFIK_MIDDLEWARE_LABEL`
-     to `coolify.traefik.middlewares=authentik-auth@file` as a **Coolify-level
-     persistent environment variable** on the `api` service (in Coolify's
-     own UI, not by editing this repo) - `docker-compose.yaml` turns it into
-     a real label on the `api` service (see the `labels:` block on that
-     service, and `.env.example`), which Coolify then injects into whatever
-     router it auto-generates for the domain you attach in its UI. Because
-     it's a persistent env var rather than a label added by hand in
-     Coolify's UI, it survives every redeploy that regenerates the service
-     from the compose file, instead of needing to be re-added each time (see
-     [#12](https://github.com/EinDev/SEGUE/issues/12)). On plain Traefik,
-     attach the middleware to that router directly in your own
-     dynamic/static config.
+     domain.** On Coolify specifically, this can be done with a
+     `coolify.traefik.middlewares=authentik-auth@file` label on the `api`
+     service (Coolify injects it into whatever router it auto-generates
+     for the domain you attach in its UI); on plain Traefik, attach the
+     middleware to that router directly in your own dynamic/static config.
    - Confirm the outpost is configured to inject the authenticated
      username into the `X-authentik-username` header (Authentik's own
      default, and this app's default for `ONAIR_AUTH_USERNAME_HEADER`) -
