@@ -108,7 +108,16 @@
     setConnLost(down);
   }
 
+  // Tells the no-JS/blocked-scripts watchdog (inline in index.html) that
+  // this script ran all the way to actually showing *some* app state --
+  // used to distinguish "slow network" from "scripts didn't run" (e.g.
+  // Brave Shields blocking this file, or an uncaught error earlier in it).
+  function markAppInitOk() {
+    if (typeof window.__segueMarkInitOk === "function") window.__segueMarkInitOk();
+  }
+
   function showDenied() {
+    markAppInitOk();
     authorized = false;
     teardownAllPreviews();
     for (const username of Array.from(detailStatsTimers.keys())) {
@@ -139,6 +148,7 @@
   }
 
   function onAuthorized() {
+    markAppInitOk();
     authorized = true;
     deniedEl.classList.add("hidden");
     appEl.classList.remove("hidden");

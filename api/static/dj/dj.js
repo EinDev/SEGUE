@@ -61,7 +61,16 @@
     setConnLost(down);
   }
 
+  // Tells the no-JS/blocked-scripts watchdog (inline in index.html) that
+  // this script ran all the way to actually showing *some* app state --
+  // used to distinguish "slow network" from "scripts didn't run" (e.g.
+  // Brave Shields blocking this file, or an uncaught error earlier in it).
+  function markAppInitOk() {
+    if (typeof window.__segueMarkInitOk === "function") window.__segueMarkInitOk();
+  }
+
   function showError() {
+    markAppInitOk();
     deniedHard = true;
     appEl.classList.add("hidden");
     pendingAppEl.classList.add("hidden");
@@ -80,6 +89,7 @@
   }
 
   function showPending(username) {
+    markAppInitOk();
     appEl.classList.add("hidden");
     errorAppEl.classList.add("hidden");
     pendingAppEl.classList.remove("hidden");
@@ -88,6 +98,7 @@
   }
 
   function render(state) {
+    markAppInitOk();
     const wasConnected = latestState ? latestState.dj.connected : null;
     latestState = state;
     const dj = state.dj;
