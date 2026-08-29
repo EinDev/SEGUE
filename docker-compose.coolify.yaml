@@ -1,4 +1,5 @@
-# Coolify-specific compose file for docker-compose.yaml.
+# Coolify-specific compose file: a fully-resolved, standalone duplicate of
+# docker-compose.yaml with one extra label on `api`.
 #
 # The base docker-compose.yaml is intentionally generic (see the "Auth &
 # routing requirements" / worked-example section of README.md) - it doesn't
@@ -6,43 +7,174 @@
 # this project's own deployment (Coolify + Traefik + Authentik) needs on the
 # `api` service, without coupling the base file to Coolify.
 #
-# Why a separate file instead of an env-var default in docker-compose.yaml:
-# an earlier attempt drove this label from `${COOLIFY_TRAEFIK_MIDDLEWARE_LABEL:-}`
-# so it would "just" be an env var Coolify users set - but Coolify does not
-# perform plain Docker Compose `${VAR:-default}` interpolation on label
-# values the way `docker compose` itself does, so the placeholder was never
-# substituted on a real deploy.
+# THIS IS A DUPLICATE, NOT A REFERENCE. Two prior approaches tried to avoid
+# duplicating the base file's content and both failed on a real Coolify
+# deploy (error: `service "api" has neither an image nor a build context
+# specified`), even though each passed a local `docker compose config` check
+# first:
+#   - Driving the label from a `${COOLIFY_TRAEFIK_MIDDLEWARE_LABEL:-}`
+#     variable with a default in docker-compose.yaml itself: Coolify does
+#     not apply that colon-dash-default interpolation syntax to label
+#     values the way `docker compose` on a dev machine does, so the
+#     placeholder was never substituted.
+#   - Using the Compose Specification's top-level `include` directive here
+#     to pull in docker-compose.yaml's services, verified locally against
+#     Compose v5.1.4: whatever Compose version Coolify's helper container
+#     actually bundles doesn't resolve that directive, so `api` came back
+#     with no build context at all.
 #
-# This file uses the Compose Specification's top-level `include:` directive
-# (supported since Compose v2.20 - far below any Compose plugin bundled
-# with the Docker 29.x host seen in real Coolify deploy logs, and verified
-# working against Compose v5.1.4 locally) to pull in the base
-# docker-compose.yaml's services and layer this file's own `services.api.labels`
-# on top - entirely standalone, with no separate merge step and no `-f`
-# chaining required. This is deliberate: Coolify's "Docker Compose"
-# application type deploys a single compose file location and has no
-# built-in way to combine two files itself, so this file has to be
-# self-sufficient when pointed at directly.
+# So this file now contains a full, static, plain copy of every service
+# from docker-compose.yaml (no `include`, no other advanced/version-
+# dependent directive), with `services.api.labels` adding the one Coolify-
+# specific label. The ordinary shell-style variable references below (e.g.
+# ONAIR_ADMIN_USERNAME in api's environment block) are left exactly as they
+# appear in docker-compose.yaml - that plain substitution mechanism is the
+# normal Compose env-passthrough behavior already working for this
+# project's own Coolify deployment today, and is not what broke in the two
+# attempts above. Only the colon-dash-*default* form used in a label value
+# was the problem, plus the include directive - see above.
 #
-# Usage (works identically whether run standalone or not, since `include:`
-# already pulls in the base file):
+# KEEPING THIS IN SYNC: because this is now a duplicate rather than a
+# reference, any change to docker-compose.yaml's services must be copied
+# over by hand. To regenerate this file from scratch after editing the
+# base file:
+#   1. Copy every line under `services:` from docker-compose.yaml into this
+#      file, unchanged.
+#   2. Re-add the `coolify.traefik.middlewares=authentik-auth@file` label
+#      under `services.api.labels` (see below).
+#   3. Verify with the exact command Coolify itself runs:
+#        docker compose --project-directory . -f docker-compose.coolify.yaml config
+#      and confirm `api` resolves with a real `build` context and that
+#      label present, with no `include` directive anywhere in this file.
+#
+# Usage:
 #   docker compose -f docker-compose.coolify.yaml up -d
 #
 # On Coolify itself: point "Docker Compose Location" directly at this file.
-# Verify what Coolify will actually run with:
-#   docker compose -f docker-compose.coolify.yaml config
-# which should resolve to a complete project with both services and the
-# `coolify.traefik.middlewares` label present on `api`.
 #
 # See README.md's worked example for the full Authentik + Traefik walkthrough.
-include:
-  - docker-compose.yaml
 services:
+  mediamtx:
+    build: ./mediamtx
+    restart: unless-stopped
+    environment:
+      ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
+      # Overrides mediamtx.yml's authHTTPAddress via MediaMTX's own
+      # MTX_<KEY> config-override mechanism, injecting the shared secret
+      # as a query param. Confirmed necessary and confirmed working
+      # end-to-end (real RTMP publish against the pinned image) - MediaMTX
+      # makes this HTTP call itself and has no way to attach a custom
+      # header to it, unlike the runOnAvailable/runOnUnavailable hooks
+      # below api's /internal/mediamtx/event, which we invoke ourselves
+      # via curl and can header however we like. See api/app/main.py's
+      # /internal/mediamtx/auth for the matching query-param check.
+      MTX_AUTHHTTPADDRESS: "http://api:8080/internal/mediamtx/auth?secret=${ONAIR_INTERNAL_SECRET}"
+    # No volume mount for mediamtx.yml on purpose: mediamtx/Dockerfile
+    # already COPYs it into the image at build time, and Coolify rebuilds
+    # the image fresh on every deploy anyway. A relative-path single-file
+    # bind mount here actively breaks on Coolify - it auto-provisions any
+    # host path it sees under `volumes:` as a *directory* for persistent
+    # storage (works fine for ./data:/data below, but Docker then refuses
+    # to bind a directory onto a file inside the container).
+    ports:
+      # RTMP publish (DJs) and RTSP read (the LJ machine's OBS) must bypass
+      # any HTTP reverse proxy entirely, same reasoning the old harbor
+      # ports had: neither protocol's handshake survives one. Host-side port
+      # is split from the container-internal port (fixed at 1935/8554 in
+      # mediamtx/mediamtx.yml) so a collision with something else already
+      # bound to those ports on a shared host can be fixed by setting
+      # ONAIR_RTMP_HOST_PORT/ONAIR_RTSP_HOST_PORT in .env, without touching
+      # this file.
+      - "${ONAIR_RTMP_HOST_PORT:-1935}:1935"
+      - "${ONAIR_RTSP_HOST_PORT:-8554}:8554"
+      # NOTE: the control API (9997) is intentionally NOT published here
+      # and NOT listed under `expose:` either - same treatment the old
+      # telnet port got. It must stay reachable only from other containers
+      # on this compose network (the `api` service polls it as
+      # mediamtx:9997) and never from the host or the internet.
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9997/v3/paths/list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   api:
+    build:
+      # Repo root, not ./api - the image needs to COPY lj-controller/ in
+      # at build time (see api/Dockerfile) so /api/admin/lj/package.zip
+      # and /api/admin/lj/obs-scene.json can serve its real files. A
+      # bind-mount of lj-controller/ was tried first and broke on Coolify:
+      # relative `volumes:` paths get provisioned as independent
+      # persistent-storage directories (same mechanism that broke the
+      # single-file mediamtx.yml bind mount earlier), not synced from the
+      # git checkout - fine for ./data below (meant to start empty and be
+      # self-populated at runtime) but wrong for something that needs the
+      # repo's actual committed file contents. Baking it into the image
+      # sidesteps that entirely, and Coolify already rebuilds this image
+      # fresh on every deploy anyway.
+      context: .
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - mediamtx
+    environment:
+      ONAIR_ADMIN_USERNAME: ${ONAIR_ADMIN_USERNAME}
+      ONAIR_AUTH_USERNAME_HEADER: ${ONAIR_AUTH_USERNAME_HEADER:-X-authentik-username}
+      ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
+      ONAIR_MAX_DJS: ${ONAIR_MAX_DJS:-6}
+      ONAIR_MEDIAMTX_HOST: ${ONAIR_MEDIAMTX_HOST:-mediamtx}
+      ONAIR_MEDIAMTX_API_PORT: ${ONAIR_MEDIAMTX_API_PORT:-9997}
+      ONAIR_MEDIAMTX_HLS_PORT: ${ONAIR_MEDIAMTX_HLS_PORT:-8888}
+      ONAIR_RTMP_PUBLIC_HOST: ${ONAIR_RTMP_PUBLIC_HOST}
+      ONAIR_RTMP_PUBLIC_PORT: ${ONAIR_RTMP_PUBLIC_PORT:-1935}
+      ONAIR_RTSP_PUBLIC_HOST: ${ONAIR_RTSP_PUBLIC_HOST}
+      ONAIR_RTSP_PUBLIC_PORT: ${ONAIR_RTSP_PUBLIC_PORT:-8554}
+      ONAIR_LJ_TOKEN: ${ONAIR_LJ_TOKEN}
+      ONAIR_LJ_READ_USERNAME: ${ONAIR_LJ_READ_USERNAME}
+      ONAIR_LJ_READ_PASSWORD: ${ONAIR_LJ_READ_PASSWORD}
+      ONAIR_DEBOUNCE_SECONDS: ${ONAIR_DEBOUNCE_SECONDS:-2}
+      ONAIR_DB_PATH: ${ONAIR_DB_PATH:-/data/onair.db}
+    volumes:
+      # Must be a persistent, named host path (not an anonymous volume that
+      # your platform could recreate) - this is what keeps DJ logins/
+      # credentials alive across a redeploy. See CONCEPT.md section 9/11.5
+      # (the DJ roster itself now lives entirely in this SQLite DB,
+      # self-registered via login through your auth layer - there is no
+      # config/djs.yaml file anymore).
+      - ./data:/data
+    expose:
+      - "8080"
+      # No `ports:` mapping on purpose: this service is meant to sit behind
+      # your own reverse proxy, not be reachable directly. Publishing 8080
+      # to the host here would fight with that - instead, join your proxy
+      # to this compose network (or add its own `ports:`/label wiring) and
+      # point it at api:8080. See the README's "Auth & routing
+      # requirements" section for exactly what that proxy needs to do.
+      #
+      # IMPORTANT: whatever proxy/domain you attach must authenticate every
+      # request except /public/* and inject the authenticated username into
+      # ONAIR_AUTH_USERNAME_HEADER - this app has no login form of its own
+      # and trusts that header completely, assuming only the proxy can set
+      # it (so the proxy must strip/overwrite any client-supplied copy).
+      #
+      # If deploying via Coolify with Traefik + Authentik (this project's
+      # own setup), that typically means attaching a domain to this service
+      # in the Coolify UI and adding a
+      # `coolify.traefik.middlewares=authentik-auth@file` label here - see
+      # the README's worked example for the full walkthrough.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     labels:
       # Injects into whatever router Coolify auto-generates for this
       # service's domain, without us having to know/hardcode its
       # Coolify-assigned router name. Requires an `authentik-auth`
       # middleware defined in Coolify's Traefik dynamic config first
-      # (Servers > Proxy > Configuration) - see README.md.
+      # (Servers > Proxy > Configuration) - see README.md. This is a
+      # literal string, not driven by any variable/default syntax - see
+      # the header comment above for why.
       - "coolify.traefik.middlewares=authentik-auth@file"

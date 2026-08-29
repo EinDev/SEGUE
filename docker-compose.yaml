@@ -1,3 +1,13 @@
+# This file is duplicated (not referenced) by docker-compose.coolify.yaml,
+# which adds one Coolify/Traefik-specific label to `api` on top of a full
+# static copy of the services below. That duplication is deliberate - see
+# the header comment at the top of docker-compose.coolify.yaml for why a
+# reference (variable-default label, then a top-level `include`) failed on
+# real Coolify deploys twice. If you change anything under `services:` in
+# THIS file, copy the same change into docker-compose.coolify.yaml by hand
+# (everything except that one extra label should stay byte-identical
+# between the two files' `services:` sections), then verify with:
+#   docker compose --project-directory . -f docker-compose.coolify.yaml config
 services:
   mediamtx:
     build: ./mediamtx

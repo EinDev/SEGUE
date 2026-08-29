@@ -169,17 +169,24 @@ longer requires restarting the media relay, only `api`, see `.env.example`).
      middleware to that router directly in your own dynamic/static config.
      This repo ships that label as a separate
      [`docker-compose.coolify.yaml`](docker-compose.coolify.yaml) file
-     rather than baking it into the generic `docker-compose.yaml` (an
-     earlier attempt drove it from an env var instead, but Coolify doesn't
-     interpolate `${VAR:-default}` in label values the way `docker compose`
-     itself does, so that never actually applied on a real deploy).
-     `docker-compose.coolify.yaml` uses the Compose Specification's
-     `include:` directive to pull in the base `docker-compose.yaml`, so it's
-     standalone and self-sufficient - run it directly with `docker compose
-     -f docker-compose.coolify.yaml up -d`, no `-f` chaining needed. On
+     rather than baking it into the generic `docker-compose.yaml`. Two
+     earlier approaches to that file both failed on a real Coolify deploy
+     even though each checked out fine with a local `docker compose config`
+     first: driving the label from a variable-with-default value (Coolify
+     doesn't apply that colon-dash-default interpolation to label values
+     the way `docker compose` on a dev machine does), then pulling in the
+     base file via the Compose Specification's top-level `include`
+     directive (whatever Compose version Coolify's helper container
+     bundles doesn't resolve it). `docker-compose.coolify.yaml` is now a
+     full, static, standalone copy of `docker-compose.yaml`'s services plus
+     that one extra label - no `include`, no advanced/version-dependent
+     directive, just plain YAML - so it works no matter what Compose
+     version anything bundles, at the cost of the two files needing to be
+     kept in sync by hand (see the comment at the top of each file for the
+     regeneration/sync steps). Run it directly with `docker compose -f
+     docker-compose.coolify.yaml up -d`, no `-f` chaining needed. On
      Coolify itself, point "Docker Compose Location" directly at
-     `docker-compose.coolify.yaml`; see the comment at the top of that file
-     for details.
+     `docker-compose.coolify.yaml`.
    - Confirm the outpost is configured to inject the authenticated
      username into the `X-authentik-username` header (Authentik's own
      default, and this app's default for `ONAIR_AUTH_USERNAME_HEADER`) -
