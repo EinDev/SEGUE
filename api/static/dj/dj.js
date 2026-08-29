@@ -405,9 +405,14 @@
     }
     emptyEl.classList.add("hidden");
     dataEl.classList.remove("hidden");
-    setText("cq-resolution", data.resolution || t("common.unknown"));
+    setText(
+      "cq-resolution",
+      [data.resolution, data.video_profile].filter(Boolean).join(" · ") || t("common.unknown")
+    );
     setText("cq-codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || t("common.unknown"));
     setText("cq-bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : t("common.calculating"));
+    setText("cq-audio", formatAudioDetail(data.audio_sample_rate, data.audio_channels));
+    setText("cq-data", formatBytes(data.bytes_received));
     setText("cq-since", data.connected_since ? formatConnSince(data.connected_since) : t("common.unknown"));
     setText(
       "cq-delay",
@@ -437,6 +442,22 @@
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
     return t("common.since", { time: `${hh}:${mm}` });
+  }
+
+  // sampleRate is absent for codecs that don't carry one at the MediaMTX
+  // API level (e.g. Opus) -- still show the channel count alone rather
+  // than falling back to "unknown" for the whole row in that case.
+  function formatAudioDetail(sampleRate, channels) {
+    const parts = [];
+    if (sampleRate != null) parts.push(`${(sampleRate / 1000).toFixed(1)} kHz`);
+    if (channels != null) parts.push(channels === 1 ? t("common.mono") : channels === 2 ? t("common.stereo") : `${channels}ch`);
+    return parts.length ? parts.join(", ") : t("common.unknown");
+  }
+
+  function formatBytes(bytes) {
+    if (bytes == null) return t("common.unknown");
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   function escapeHtml(str) {
