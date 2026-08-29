@@ -431,9 +431,67 @@
   }
   #admin-link:hover { background: var(--bg-raised-2); }
   #admin-link.hidden { display: none; }
+
+  #js-blocked-warning.hidden { display: none; }
 </style>
 </head>
 <body>
+
+<noscript>
+  <div class="error-state">
+    <div class="box">
+      <h1>JavaScript benötigt / JavaScript required</h1>
+      <p class="text-dim">
+        Diese Seite braucht aktiviertes JavaScript. Falls du Brave benutzt: klicke auf
+        das Löwen-Symbol in der Adressleiste und schalte "Skripte blockieren" für diese
+        Seite aus, dann lade die Seite neu.
+      </p>
+      <p class="text-dim">
+        This page requires JavaScript to work. If you're using Brave: click the lion
+        icon in the address bar and turn off "Block scripts" for this site, then reload
+        the page.
+      </p>
+    </div>
+  </div>
+</noscript>
+
+<div id="js-blocked-warning" class="error-state hidden">
+  <div class="box">
+    <h1>Seite konnte nicht starten / Page failed to start</h1>
+    <p class="text-dim">
+      Die Seite scheint nicht richtig zu laden - vermutlich blockiert dein Browser ein
+      benötigtes Skript. Falls du Brave benutzt: klicke auf das Löwen-Symbol in der
+      Adressleiste, prüfe die Shields-Einstellungen für diese Seite (z. B. "Skripte
+      blockieren" ausschalten) und lade die Seite neu.
+    </p>
+    <p class="text-dim">
+      This page doesn't seem to be loading correctly - your browser may be blocking a
+      required script. If you're using Brave: click the lion icon in the address bar,
+      check the Shields settings for this site (e.g. turn off "Block scripts"), and
+      reload the page.
+    </p>
+  </div>
+</div>
+<script>
+  // Independent of dj.js: marks init OK once dj.js actually manages to show
+  // *some* app state, and otherwise reveals a plain-language warning after a
+  // short grace period. Catches both "scripts fully blocked" (Brave Shields
+  // "Block Scripts", other blockers) in a way <noscript> above can't (that
+  // only fires when scripting itself is disabled, not when one script file
+  // among several silently fails to load/run) and "a script errored before
+  // rendering anything".
+  window.__segueMarkInitOk = function () {
+    window.__segueInitOk = true;
+    var el = document.getElementById("js-blocked-warning");
+    if (el) el.classList.add("hidden");
+  };
+  window.setTimeout(function () {
+    if (!window.__segueInitOk) {
+      var el = document.getElementById("js-blocked-warning");
+      if (el) el.classList.remove("hidden");
+    }
+  }, 4000);
+</script>
 
 <div id="lang-mount"></div>
 
