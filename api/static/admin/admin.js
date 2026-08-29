@@ -306,6 +306,8 @@
       djDetailField("resolution", t("common.resolution")) +
       djDetailField("codec", t("common.codec")) +
       djDetailField("bitrate", t("common.bitrate")) +
+      djDetailField("audio", t("common.audio")) +
+      djDetailField("data", t("common.dataReceived")) +
       djDetailField("delay", t("common.delay")) +
       djDetailField("since", t("common.connectedSince")) +
       djDetailField("remote", t("admin.djs.field.remote")) +
@@ -419,14 +421,21 @@
       set("resolution", "—");
       set("codec", "—");
       set("bitrate", "—");
+      set("audio", "—");
+      set("data", "—");
       set("delay", "—");
       set("since", "—");
       set("remote", "—");
       set("agent", "—");
     } else {
-      set("resolution", data.resolution || t("common.unknown"));
+      set(
+        "resolution",
+        [data.resolution, data.video_profile].filter(Boolean).join(" · ") || t("common.unknown")
+      );
       set("codec", [data.video_codec, data.audio_codec].filter(Boolean).join(" / ") || t("common.unknown"));
       set("bitrate", data.bitrate_kbps != null ? `${data.bitrate_kbps} kbit/s` : t("common.calculating"));
+      set("audio", formatAudioDetail(data.audio_sample_rate, data.audio_channels));
+      set("data", formatBytes(data.bytes_received));
       // Same figure as the DJ's own "connection quality" card - this is
       // DJ-encoder-to-relay delay only, not end-to-end to VRCDN (see
       // mediamtx_stats.py's module docstring for why that isn't
@@ -539,6 +548,22 @@
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
     return t("common.since", { time: `${hh}:${mm}` });
+  }
+
+  // Same shape as dj.js's own helpers of the same name, against the same
+  // /api/admin|dj/*/stream response - see mediamtx_stats.py for exactly
+  // which codecs carry sampleRate (e.g. Opus doesn't).
+  function formatAudioDetail(sampleRate, channels) {
+    const parts = [];
+    if (sampleRate != null) parts.push(`${(sampleRate / 1000).toFixed(1)} kHz`);
+    if (channels != null) parts.push(channels === 1 ? t("common.mono") : channels === 2 ? t("common.stereo") : `${channels}ch`);
+    return parts.length ? parts.join(", ") : t("common.unknown");
+  }
+
+  function formatBytes(bytes) {
+    if (bytes == null) return t("common.unknown");
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   // ---- Rendering: DJ roster (registration + ready approval) ----

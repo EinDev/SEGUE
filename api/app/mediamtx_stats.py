@@ -9,10 +9,15 @@ VRCDN) delay -- this server has no visibility into the LJ's OBS internals
 or VRCDN's own ingest, so that number cannot honestly be computed here.
 What IS computed and shown:
 
-  - Ingest health (get_ingest_stats): codec, resolution, an average
-    bitrate since connect, and (from MediaMTX's RTMP connection list) the
-    publisher's remote address and encoder user-agent. Read straight off
-    MediaMTX's control API, no probing involved.
+  - Ingest health (get_ingest_stats): codec, resolution, video
+    profile/level (H264/H265 only), audio sample rate/channel count, an
+    average bitrate since connect, total bytes received since connect,
+    and (from MediaMTX's RTMP connection list) the publisher's remote
+    address and encoder user-agent. Read straight off MediaMTX's control
+    API, no probing involved. Field names verified against the pinned
+    MediaMTX release's own source (internal/defs/api_path*.go) rather
+    than guessed -- notably, there is no framerate field available here,
+    so this deliberately does not show one.
 
   - "Verzoegerung DJ -> Server" (get_hls_delay_seconds): how far behind
     the live edge the relay's own HLS output currently is, derived by
@@ -84,11 +89,26 @@ async def get_ingest_stats(
     audio = next((t for t in tracks if t.get("codec") not in _VIDEO_CODECS), None)
 
     resolution = None
+    video_profile = None
     if video:
         props = video.get("codecProps") or {}
         w, h = props.get("width"), props.get("height")
         if w and h:
             resolution = f"{w}x{h}"
+        # Only H264/H265 carry a human-readable profile+level string here
+        # (see mediamtx's APIPathTrackCodecPropsH264/H265 -- AV1/VP9 expose
+        # numeric profile/level/tier fields instead, not handled here to
+        # avoid guessing at a presentation for those less-common encoders).
+        profile, level = props.get("profile"), props.get("level")
+        if isinstance(profile, str) and profile:
+            video_profile = f"{profile} {level}" if level else profile
+
+    audio_sample_rate = None
+    audio_channels = None
+    if audio:
+        aprops = audio.get("codecProps") or {}
+        audio_sample_rate = aprops.get("sampleRate")
+        audio_channels = aprops.get("channelCount")
 
     ready_time = _parse_iso(path_data.get("readyTime"))
     bytes_received = path_data.get("bytesReceived") or 0
@@ -116,7 +136,14 @@ async def get_ingest_stats(
         "video_codec": video.get("codec") if video else None,
         "audio_codec": audio.get("codec") if audio else None,
         "resolution": resolution,
+        "video_profile": video_profile,
+        "audio_sample_rate": audio_sample_rate,
+        "audio_channels": audio_channels,
         "bitrate_kbps": bitrate_kbps,
+        # Total ingest volume since connect - cheap, honest "anything" of a
+        # metric straight off path_data, distinct from the derived
+        # since-connect average in bitrate_kbps above.
+        "bytes_received": bytes_received,
         "connected_since": (
             ready_time.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
             if ready_time
