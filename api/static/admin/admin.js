@@ -661,11 +661,25 @@
     const scheduleRow = document.createElement("div");
     scheduleRow.className = "schedule-row";
     scheduleRow.innerHTML =
-      '<span>Läuft:</span>' +
+      "<span>" + escapeHtml(t("admin.roster.schedule.running")) + "</span>" +
       '<input type="datetime-local" class="schedule-start">' +
-      '<span>bis</span>' +
+      "<span>" + escapeHtml(t("admin.roster.schedule.until")) + "</span>" +
       '<input type="datetime-local" class="schedule-end">' +
-      '<button class="schedule-save-btn">Speichern</button>';
+      '<button class="schedule-save-btn">' + escapeHtml(t("common.save")) + "</button>";
+    // Track whether the admin has an unsaved edit in either field so a
+    // poll/WS-pushed roster refresh (every ~3s, or debounced on every push)
+    // can't clobber it the instant the field loses focus -- e.g. tabbing
+    // from start to end, or moving the mouse to click "Speichern" itself,
+    // already blurs the field before the click fires. Same reasoning as
+    // eventNameDirty above, just per-field instead of per-page.
+    const scheduleStartInput = scheduleRow.querySelector(".schedule-start");
+    const scheduleEndInput = scheduleRow.querySelector(".schedule-end");
+    scheduleStartInput.addEventListener("input", () => {
+      scheduleStartInput.dataset.dirty = "1";
+    });
+    scheduleEndInput.addEventListener("input", () => {
+      scheduleEndInput.dataset.dirty = "1";
+    });
     scheduleRow
       .querySelector(".schedule-save-btn")
       .addEventListener("click", () => saveSchedule(username, row));
@@ -686,14 +700,14 @@
     // Set via the DOM API, not an interpolated HTML string -- a
     // self-registered username can contain characters (e.g. `"`) that
     // would otherwise break out of an attribute in an innerHTML template.
-    chatInput.placeholder = `Nachricht an ${username}…`;
+    chatInput.placeholder = t("admin.roster.chat.placeholder", { username });
     chatInput.maxLength = 500;
     chatInput.autocomplete = "off";
 
     const chatSendBtn = document.createElement("button");
     chatSendBtn.type = "submit";
     chatSendBtn.className = "roster-chat-send-btn";
-    chatSendBtn.textContent = "Senden";
+    chatSendBtn.textContent = t("common.send");
 
     chatForm.appendChild(chatInput);
     chatForm.appendChild(chatSendBtn);
@@ -722,7 +736,7 @@
     const isOpen = expandedChats.has(dj.username);
     chatToggle.innerHTML = "";
     chatToggle.appendChild(
-      document.createTextNode(isOpen ? "Nachrichten ausblenden" : "Nachrichten")
+      document.createTextNode(isOpen ? t("admin.roster.chat.hide") : t("admin.roster.chat.show"))
     );
     if (dj.unread_messages) {
       const badge = document.createElement("span");
@@ -735,13 +749,18 @@
 
     // Schedule inputs: only overwrite from server data while the admin
     // isn't actively editing that exact field (same reasoning as the
-    // event-name input above).
+    // event-name input above). Focus alone isn't enough here -- clicking
+    // "Speichern" blurs the field an instant before the click fires, and a
+    // poll/WS-pushed refresh landing in that gap would wipe the just-typed
+    // value back to "" (server has no value yet), sending null on save.
+    // The dirty flag (set on input, cleared once saveSchedule succeeds)
+    // keeps the field showing what the admin typed until that happens.
     const startInput = row.querySelector(".schedule-start");
     const endInput = row.querySelector(".schedule-end");
-    if (document.activeElement !== startInput) {
+    if (document.activeElement !== startInput && startInput.dataset.dirty !== "1") {
       startInput.value = isoToLocalInput(dj.scheduled_start);
     }
-    if (document.activeElement !== endInput) {
+    if (document.activeElement !== endInput && endInput.dataset.dirty !== "1") {
       endInput.value = isoToLocalInput(dj.scheduled_end);
     }
 
@@ -821,17 +840,24 @@
   }
 
   async function saveSchedule(username, row) {
-    const startVal = row.querySelector(".schedule-start").value;
-    const endVal = row.querySelector(".schedule-end").value;
+    const startInput = row.querySelector(".schedule-start");
+    const endInput = row.querySelector(".schedule-end");
     try {
-      await authedFetch(`/api/djs/${encodeURIComponent(username)}/schedule`, {
+      const resp = await authedFetch(`/api/djs/${encodeURIComponent(username)}/schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          scheduled_start: localInputToIso(startVal),
-          scheduled_end: localInputToIso(endVal),
+          scheduled_start: localInputToIso(startInput.value),
+          scheduled_end: localInputToIso(endInput.value),
         }),
       });
+      // Only clear the dirty flags once the save actually went through --
+      // on failure, keep showing what the admin typed rather than letting
+      // the next roster refresh silently discard it.
+      if (resp.ok) {
+        delete startInput.dataset.dirty;
+        delete endInput.dataset.dirty;
+      }
     } catch (e) { /* handled via authedFetch */ }
     fetchRoster();
   }
@@ -898,7 +924,7 @@
     if (!messages || messages.length === 0) {
       const empty = document.createElement("div");
       empty.className = "text-faint";
-      empty.textContent = "Noch keine Nachrichten.";
+      empty.textContent = t("admin.roster.chat.empty");
       wrap.appendChild(empty);
       return;
     }
@@ -910,9 +936,11 @@
       bubble.textContent = msg.text;
       const meta = document.createElement("span");
       meta.className = "roster-chat-msg-meta";
-      const who = msg.sender === "admin" ? "Du" : "DJ";
+      const who = msg.sender === "admin" ? t("admin.roster.chat.you") : t("admin.roster.chat.dj");
       if (msg.sender === "admin") {
-        meta.textContent = `${who}, ${formatChatTime(msg.created_at)}` + (msg.acked_at ? " · bestätigt" : " · noch nicht bestätigt");
+        meta.textContent =
+          `${who}, ${formatChatTime(msg.created_at)} · ` +
+          (msg.acked_at ? t("admin.roster.chat.acked") : t("admin.roster.chat.notAcked"));
         if (msg.acked_at) meta.classList.add("acked");
       } else {
         meta.textContent = `${who}, ${formatChatTime(msg.created_at)}`;
