@@ -124,3 +124,34 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+networks:
+  default:
+    # Without this, a DJ connecting over IPv6 (an RTMP hostname can easily
+    # have both an A and an AAAA record) hits a compose network that's
+    # otherwise IPv4-only. Docker can't NAT an incoming IPv6 packet directly
+    # into an IPv4-only container network, so it silently falls back to its
+    # userland proxy (docker-proxy) to bridge the two - which re-originates
+    # the connection from itself, so mediamtx (and thus the admin panel's
+    # "Address" field, sourced from /v3/rtmpconns/list's remoteAddr) sees
+    # this network's own gateway address (e.g. 10.0.5.1) instead of the
+    # DJ's real IP. Diagnosed as the likely cause of a report where a
+    # remote DJ, publishing to a dual-stack (A+AAAA) RTMP hostname, showed
+    # up with exactly that gateway-address symptom - see "What can go
+    # wrong" in README.md for the other cause (docker-proxy handling *all*
+    # TCP, not just IPv6 fallback) this doesn't fix, and how to tell them
+    # apart after deploying this change.
+    #
+    # Giving this network a real IPv6 subnet lets Docker's normal ip6tables
+    # DNAT path handle IPv6 publishers directly instead of proxying them, so
+    # mediamtx sees the DJ's actual address. Shouldn't need any daemon-wide
+    # IPv6 config - that's only required for "the default bridge network"
+    # (the single implicit one predating Compose); a user-defined network
+    # like this one just needs enable_ipv6 set here, ip6tables is on by
+    # default on current Docker Engine releases, and Docker auto-assigns a
+    # ULA /64 subnet since none is given below. If `docker network inspect`
+    # on the resulting network shows `EnableIPv6: false` or mediamtx never
+    # gets a GlobalIPv6Address, your Engine is old enough to need explicit
+    # daemon.json config instead - see
+    # https://docs.docker.com/engine/daemon/ipv6/.
+    enable_ipv6: true
