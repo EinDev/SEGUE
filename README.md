@@ -263,6 +263,36 @@ likely operator mistakes regardless of deployment platform:
   redeploy `api` (this no longer needs a media-relay restart, but still
   restarts `api` briefly, so prefer doing it between sets).
 
+- **The admin panel shows an internal-looking address (e.g. `10.x.x.x` or
+  `172.x.x.x`) instead of a DJ's real IP.** This is `mediamtx`'s own
+  `/v3/rtmpconns/list` reporting the connection source it saw - the app
+  displays it unmodified, so the wrong value comes from Docker's
+  networking, not a bug in the app itself. If the DJ was on the same
+  host/LAN as the server, an internal address is actually *expected* -
+  Docker hairpins loopback connections the same way, and this isn't a bug.
+  For a genuinely remote DJ, there are two known causes, and telling them
+  apart matters because they need different fixes:
+  1. **Your RTMP hostname resolves to both an IPv4 and an IPv6 address**
+     (check with e.g. `dig AAAA your.rtmp.host`), and this stack's Docker
+     network doesn't have IPv6 enabled - so an IPv6-preferring DJ's
+     connection gets bridged in through Docker's userland proxy
+     (`docker-proxy`) instead of native NAT, which shows up as the
+     network's own gateway address instead of the DJ's. The compose files
+     already set `networks.default.enable_ipv6: true` for this (see the
+     comment next to that setting for the Docker Engine version caveat and
+     how to verify it actually took effect - especially on Coolify, which
+     doesn't always attach services to the plain network a compose file
+     declares).
+  2. **Docker's userland proxy is handling *all* TCP for that port**, not
+     just an IPv6 fallback - happens with rootless Docker, `"iptables":
+     false` in daemon.json, or a host firewall (ufw/nftables) that reset
+     the `DOCKER` iptables chain after the daemon wrote it. The
+     discriminator: if a DJ you *know* is IPv4-only still shows the
+     gateway address after enabling IPv6 above, it's this, not IPv6
+     fallback. Fix is host-level: `"userland-proxy": false` in
+     `/etc/docker/daemon.json` (restart the daemon), or fixing whatever is
+     clobbering the `DOCKER` chain.
+
 - **The LJ controller can't reach `api`.** OBS stays frozen on whoever was
   last on air instead of updating - check `lj_token` in
   `lj-controller/config.yaml` matches `ONAIR_LJ_TOKEN`, and that the LJ

@@ -178,3 +178,22 @@ services:
       # literal string, not driven by any variable/default syntax - see
       # the header comment above for why.
       - "coolify.traefik.middlewares=authentik-auth@file"
+
+networks:
+  default:
+    # Mirrors docker-compose.yaml's `networks.default.enable_ipv6` - see
+    # that file's comment for why (an IPv6 DJ otherwise showing this
+    # network's gateway address instead of their real IP). Not under
+    # `services:`, so it isn't subject to the byte-identical rule above,
+    # but keep it in sync by hand anyway.
+    #
+    # UNVERIFIED against a real Coolify deploy: Coolify has its own compose
+    # parsing quirks (see the file header above) and may attach services to
+    # a network it manages itself instead of the plain `default` one this
+    # file declares, in which case this setting is a no-op. After
+    # deploying, confirm with `docker network inspect` on whatever network
+    # `mediamtx` is actually on (`docker inspect mediamtx` to find it) -
+    # look for `EnableIPv6: true` and a `GlobalIPv6Address` on the
+    # container. If Coolify overrides it, this needs a host-level fix
+    # instead (e.g. `default-network-opts` in daemon.json).
+    enable_ipv6: true
