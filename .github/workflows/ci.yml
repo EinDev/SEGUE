@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  api-tests:
+    name: API (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+
+      # Gleiche Nebenversion wie api/Dockerfile (python:3.12-slim), damit die
+      # Prüfung dieselbe Umgebung trifft wie der Betrieb.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: api/requirements.txt
+
+      - name: Abhängigkeiten
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Tests
+        run: python -m pytest tests -q
+
+      # Die Tests importieren nur einzelne Module. Dieser Schritt stellt sicher,
+      # dass die Anwendung als Ganzes überhaupt noch startet -- ein Upgrade, das
+      # die Startphase zerlegt, fällt sonst erst im Betrieb auf.
+      #
+      # Die Pflichtvariablen werden hier zur Laufzeit erzeugt statt im Klartext
+      # hinterlegt: feste Platzhalter wie "ci-secret" sind zwar wertlos, lösen
+      # aber Geheimnis-Scanner aus und trainieren einem an, so etwas einzuchecken.
+      - name: Anwendung startet
+        env:
+          ONAIR_ADMIN_USERNAME: admin
+          ONAIR_RTMP_PUBLIC_HOST: rtmp.example.invalid
+          ONAIR_RTSP_PUBLIC_HOST: rtsp.example.invalid
+          ONAIR_DB_PATH: /tmp/ci-onair.db
+        run: |
+          ONAIR_INTERNAL_SECRET="$(openssl rand -hex 16)" \
+          ONAIR_LJ_TOKEN="$(openssl rand -hex 16)" \
+          ONAIR_LJ_READ_USERNAME="ci-$(openssl rand -hex 4)" \
+          ONAIR_LJ_READ_PASSWORD="$(openssl rand -hex 16)" \
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          import app.main as main
+
+          with TestClient(main.app) as client:
+              response = client.get("/healthz")
+              assert response.status_code == 200, response.status_code
+              assert main.app.state.admin_username == "admin"
+          print("Start und /healthz in Ordnung")
+          PY
+
+  docker-build:
+    name: Docker-Image baut
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Kontext ist das Repo-Wurzelverzeichnis, nicht ./api: das Image kopiert
+      # lj-controller/ mit hinein (siehe Kommentar in api/Dockerfile und
+      # docker-compose.yaml). Mit ./api als Kontext bricht der Bau ab.
+      - name: api bauen
+        run: docker build -f api/Dockerfile -t segue-api:ci .
