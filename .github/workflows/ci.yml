@@ -34,17 +34,21 @@ jobs:
       # Die Tests importieren nur einzelne Module. Dieser Schritt stellt sicher,
       # dass die Anwendung als Ganzes überhaupt noch startet -- ein Upgrade, das
       # die Startphase zerlegt, fällt sonst erst im Betrieb auf.
+      #
+      # Die Pflichtvariablen werden hier zur Laufzeit erzeugt statt im Klartext
+      # hinterlegt: feste Platzhalter wie "ci-secret" sind zwar wertlos, lösen
+      # aber Geheimnis-Scanner aus und trainieren einem an, so etwas einzuchecken.
       - name: Anwendung startet
         env:
           ONAIR_ADMIN_USERNAME: admin
-          ONAIR_INTERNAL_SECRET: ci-secret
-          ONAIR_LJ_TOKEN: ci-token
-          ONAIR_LJ_READ_USERNAME: ci-reader
-          ONAIR_LJ_READ_PASSWORD: ci-reader-pw
           ONAIR_RTMP_PUBLIC_HOST: rtmp.example.invalid
           ONAIR_RTSP_PUBLIC_HOST: rtsp.example.invalid
           ONAIR_DB_PATH: /tmp/ci-onair.db
         run: |
+          ONAIR_INTERNAL_SECRET="$(openssl rand -hex 16)" \
+          ONAIR_LJ_TOKEN="$(openssl rand -hex 16)" \
+          ONAIR_LJ_READ_USERNAME="ci-$(openssl rand -hex 4)" \
+          ONAIR_LJ_READ_PASSWORD="$(openssl rand -hex 16)" \
           python - <<'PY'
           from fastapi.testclient import TestClient
           import app.main as main
@@ -61,5 +65,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Kontext ist das Repo-Wurzelverzeichnis, nicht ./api: das Image kopiert
+      # lj-controller/ mit hinein (siehe Kommentar in api/Dockerfile und
+      # docker-compose.yaml). Mit ./api als Kontext bricht der Bau ab.
       - name: api bauen
-        run: docker build -t segue-api:ci ./api
+        run: docker build -f api/Dockerfile -t segue-api:ci .
