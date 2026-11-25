@@ -40,6 +40,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSoc
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import lj_package, mediamtx_client, mediamtx_stats, system_stats
 from .db import Database, NoFreeSlotError
@@ -74,6 +75,37 @@ def _env(name: str, default: Optional[str] = None) -> str:
 
 
 app = FastAPI(title="SEGUE api")
+
+
+# ---------------------------------------------------------------------------
+# Host-Header-Prüfung (CVE-2026-48710)
+# ---------------------------------------------------------------------------
+# starlette < 1.0.1 übernimmt den Host-Header ungeprüft in request.url.path.
+# Damit lassen sich pfadbasierte Prüfungen aushebeln -- hier konkret die
+# /internal/- und /api/admin/-Pfade, die der Reverse Proxy und die
+# Identitätsprüfung unterscheiden müssen.
+#
+# Die Version lässt sich nicht einfach anheben: fastapi 0.111 verlangt
+# starlette < 0.38, der Sprung auf eine Fassung mit dem Fix ist ein
+# Major-Wechsel (unter anderem fällt @app.on_event weg). Bis dahin schließt
+# TrustedHostMiddleware den Angriffsweg, indem sie unerwartete Host-Header
+# verwirft, bevor eine Route sie sieht.
+#
+# ONAIR_ALLOWED_HOSTS: durch Komma getrennte Hostnamen, z. B.
+# "segue.example.com,localhost". Leer gelassen bleibt das Verhalten wie
+# bisher (alles erlaubt) -- dann greift der Schutz nicht, deshalb in jeder
+# öffentlich erreichbaren Installation setzen.
+#
+# Entfernen, sobald die API auf starlette >= 1.0.1 läuft.
+_allowed_hosts = [h.strip() for h in os.environ.get("ONAIR_ALLOWED_HOSTS", "").split(",") if h.strip()]
+if _allowed_hosts:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
+    logger.info("Host-Header-Prüfung aktiv für: %s", ", ".join(_allowed_hosts))
+else:
+    logger.warning(
+        "ONAIR_ALLOWED_HOSTS ist nicht gesetzt -- Host-Header werden nicht geprüft "
+        "(CVE-2026-48710). In öffentlich erreichbaren Installationen setzen."
+    )
 
 
 # ---------------------------------------------------------------------------

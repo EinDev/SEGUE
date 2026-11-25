@@ -75,6 +75,9 @@ services:
       - mediamtx
     environment:
       ONAIR_ADMIN_USERNAME: ${ONAIR_ADMIN_USERNAME}
+      # Erlaubte Host-Header, durch Komma getrennt (CVE-2026-48710).
+      # Leer = keine Pruefung; in oeffentlich erreichbaren Installationen setzen.
+      ONAIR_ALLOWED_HOSTS: ${ONAIR_ALLOWED_HOSTS:-}
       ONAIR_AUTH_USERNAME_HEADER: ${ONAIR_AUTH_USERNAME_HEADER:-X-authentik-username}
       ONAIR_INTERNAL_SECRET: ${ONAIR_INTERNAL_SECRET}
       ONAIR_MAX_DJS: ${ONAIR_MAX_DJS:-6}

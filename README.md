@@ -50,6 +50,17 @@ until demoted again.
 
 Concretely, your reverse proxy/auth layer needs to:
 
+- **Set `ONAIR_ALLOWED_HOSTS`** to the hostname(s) this app is served
+  under, comma-separated (for example `segue.example.com,localhost`).
+  The app then rejects requests carrying any other `Host` header before
+  routing sees them. This is not cosmetic: the pinned starlette version
+  copies the `Host` header into `request.url.path` unvalidated
+  (CVE-2026-48710), which lets a crafted header bypass path-based checks
+  such as the `/internal/*` and `/api/admin/*` split. Left empty, the
+  check is disabled and that bypass is reachable — so set it on anything
+  publicly routable. The setting can go once the API runs on
+  starlette >= 1.0.1, which needs a major FastAPI upgrade.
+
 - **Authenticate every request to the `api` service** *except* the two
   routes under `/public/*` (`/public/api/lj/state` and `/public/ws/lj`),
   and inject the authenticated username into the header named by
