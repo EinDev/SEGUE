@@ -13,16 +13,21 @@ lifespan-Phase tatsächlich durchläuft, und prüft hinterher, dass der
 Startup-Code wirklich lief.
 """
 import os
+import secrets
 
 import pytest
 from fastapi.testclient import TestClient
 
+# Pflichtvariablen, ohne die die Startphase abbricht. Die Geheimnis-artigen
+# Werte werden je Lauf erzeugt statt im Klartext hinterlegt: feste
+# Zeichenketten wie "test-secret" sind zwar wertlos, loesen aber
+# Geheimnis-Scanner aus und gewoehnen einem an, so etwas einzuchecken.
 REQUIRED_ENV = {
     "ONAIR_ADMIN_USERNAME": "admin",
-    "ONAIR_INTERNAL_SECRET": "test-secret",
-    "ONAIR_LJ_TOKEN": "test-token",
+    "ONAIR_INTERNAL_SECRET": secrets.token_hex(16),
+    "ONAIR_LJ_TOKEN": secrets.token_hex(16),
     "ONAIR_LJ_READ_USERNAME": "reader",
-    "ONAIR_LJ_READ_PASSWORD": "reader-pw",
+    "ONAIR_LJ_READ_PASSWORD": secrets.token_hex(16),
     "ONAIR_RTMP_PUBLIC_HOST": "rtmp.example.invalid",
     "ONAIR_RTSP_PUBLIC_HOST": "rtsp.example.invalid",
 }
