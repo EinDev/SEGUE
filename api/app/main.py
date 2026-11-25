@@ -30,6 +30,7 @@ import os
 import re
 import secrets
 from collections import deque
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Set
@@ -73,7 +74,22 @@ def _env(name: str, default: Optional[str] = None) -> str:
     return value
 
 
-app = FastAPI(title="SEGUE api")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start-/Abbau-Phase der Anwendung.
+
+    Loest @app.on_event("startup"/"shutdown") ab: die Dekoratoren sind seit
+    FastAPI 0.93 veraltet und laufen nur noch mit Warnung. Die eigentliche
+    Arbeit steht unveraendert in _startup()/_shutdown() weiter unten.
+    """
+    await _startup()
+    try:
+        yield
+    finally:
+        await _shutdown()
+
+
+app = FastAPI(title="SEGUE api", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -202,8 +218,7 @@ def _connected_usernames(slot_names: Set[str]) -> Set[str]:
 # Startup / shutdown
 # ---------------------------------------------------------------------------
 
-@app.on_event("startup")
-async def on_startup() -> None:
+async def _startup() -> None:
     app.state.admin_username = _env("ONAIR_ADMIN_USERNAME")
     app.state.auth_header = os.environ.get("ONAIR_AUTH_USERNAME_HEADER", "X-authentik-username")
     app.state.internal_secret = _env("ONAIR_INTERNAL_SECRET")
@@ -344,8 +359,7 @@ async def _history_collector_loop() -> None:
         await asyncio.sleep(HISTORY_SAMPLE_INTERVAL_SECONDS)
 
 
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
+async def _shutdown() -> None:
     task = getattr(app.state, "mediamtx_task", None)
     if task is not None:
         task.cancel()
